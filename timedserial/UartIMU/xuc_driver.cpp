@@ -169,7 +169,7 @@ void XucDriver::transmit_cmd(float yaw, float yaw_spd, float pitch, float pitch_
 {
     // Hand-eye collection must never command the lower controller.  This is
     // deliberately opt-in so normal runtime behaviour is unchanged.
-    if (calibration_rx_only()) return;
+    if (calibration_rx_only() || !fire_mode_enabled_.load()) return;
 
     (void)yaw_acc;
     (void)pitch_acc;
@@ -282,7 +282,12 @@ bool XucDriver::process_status_packet(const uint8_t* data)
     // STM32 mirrors its CRC-validated tracking gate in status bit 1.  This
     // diagnostic bit has no control effect and is available only in logs.
     static int last_mcu_tracking = -1;
-    const int mcu_tracking = (pkt.flags & 0x02) ? 1 : 0;
+    const int mcu_tracking = (pkt.flags & HeroXucFlags::ResetTracker) ? 1 : 0;
+    const bool fire_mode = (pkt.flags & HeroXucFlags::FireMode) != 0;
+    const bool previous_fire_mode = fire_mode_enabled_.exchange(fire_mode);
+    if (fire_mode != previous_fire_mode) {
+        LOGM_S("[HeroXuc] fire_mode: %s", fire_mode ? "ENABLED" : "DISABLED");
+    }
     if (mcu_tracking != last_mcu_tracking) {
         LOGM_S("[HeroXuc] MCU track gate: %s", mcu_tracking ? "ACTIVE" : "inactive");
         last_mcu_tracking = mcu_tracking;
@@ -298,7 +303,7 @@ bool XucDriver::process_status_packet(const uint8_t* data)
     sts.robot_speed_mps = MIN_BULLET_SPEED_MPS;
     sts.enemy_color = test_enemy_blue()
         ? EnemyColor::BLUE
-        : ((pkt.flags & 0x01) ? EnemyColor::BLUE : EnemyColor::RED);
+        : ((pkt.flags & HeroXucFlags::DetectColor) ? EnemyColor::BLUE : EnemyColor::RED);
     if (status_cb_) {
         status_cb_(sts);
     }

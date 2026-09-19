@@ -21,7 +21,7 @@
 #pragma pack(push, 1)
 struct HeroXucStatusPacket {
     uint8_t header;       // 0x5A
-    uint8_t flags;        // bit0 detect_color: 0 red, 1 blue; bit1 reset_tracker
+    uint8_t flags;        // bit0 detect_color, bit1 reset_tracker, bit7 fire_mode
     float roll;           // degrees, from imu_pantile.GetAngleRoll()
     float pitch;          // degrees, from imu_pantile.GetAnglePitch()
     float yaw;            // degrees, from imu_pantile.GetAngleYaw()
@@ -30,6 +30,12 @@ struct HeroXucStatusPacket {
     float aim_z;
     uint16_t checksum;    // CRC16, low byte first
 };
+
+namespace HeroXucFlags {
+constexpr uint8_t DetectColor = 1u << 0;
+constexpr uint8_t ResetTracker = 1u << 1;
+constexpr uint8_t FireMode = 1u << 7;
+} // namespace HeroXucFlags
 
 struct HeroXucControlPacket {
     uint8_t header;       // 0xA5
@@ -86,6 +92,7 @@ private:
 
     std::thread rx_thread_;
     std::atomic<bool> running_{false};
+    std::atomic<bool> fire_mode_enabled_{false};
 
     static constexpr size_t RX_BUF_SIZE = 256;
     uint8_t rx_buf_[RX_BUF_SIZE]{};
