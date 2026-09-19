@@ -23,6 +23,9 @@ namespace sensor
 {
     struct SensorConfig : pipeline::ModuleConfig
     {
+        bool save_image = false;   /*!< 是否自动保存原始帧用于标定 */
+        int save_interval = 0;     /*!< 每隔多少帧保存一张（<=0 时不保存） */
+        bool calib_detect = false; /*!< 是否实时检测棋盘格角点（标定模式专用，会拖慢帧率） */
     };
 
     /**

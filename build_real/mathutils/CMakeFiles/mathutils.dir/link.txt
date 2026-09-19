@@ -1,0 +1,2 @@
+/usr/bin/ar qc libmathutils.a CMakeFiles/mathutils.dir/CoordTransformer.cpp.o
+/usr/bin/ranlib libmathutils.a

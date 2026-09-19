@@ -174,6 +174,19 @@ bool HikCamWrapper::init(bool debug)
             break;
         }
 
+        // 开启自动曝光与自动增益，避免室内环境下画面欠曝（画面过暗）。
+        // ExposureAuto/GainAuto 枚举值: 0=Off, 1=Once, 2=Continuous
+        if (MV_CC_SetEnumValue(cam_handle, "ExposureAuto", 2) != MV_OK)
+        {
+            if (debug)
+                std::cout << "Set ExposureAuto fail" << std::endl;
+        }
+        if (MV_CC_SetEnumValue(cam_handle, "GainAuto", 2) != MV_OK)
+        {
+            if (debug)
+                std::cout << "Set GainAuto fail" << std::endl;
+        }
+
         pData = (unsigned char *)malloc(sizeof(unsigned char) * stParam.nCurValue);
 
         nDataSize = stParam.nCurValue;

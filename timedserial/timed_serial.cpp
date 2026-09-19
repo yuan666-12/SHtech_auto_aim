@@ -5,6 +5,9 @@
 
 #include "timed_serial.hpp"
 
+#include <algorithm>
+#include <cmath>
+
 namespace hardware
 {
     // TimedSerial 实现
@@ -136,13 +139,14 @@ namespace hardware
         else {
             latest_robot_status_.robot_speed_mps = sts.robot_speed_mps;
             latest_robot_status_.program_mode = sts.program_mode;
+            latest_robot_status_.enemy_color = sts.enemy_color;
         }
         
         if (config_.debug.log_text)
         {
-            // LOGM_S("[TimedSerial] Status updated: enemy_color=%d, speed=%.2f", 
-            //        static_cast<int>(latest_robot_status_.enemy_color), 
-            //        latest_robot_status_.robot_speed_mps);
+            LOGM_S("[TimedSerial] Status updated: enemy_color=%d, speed=%.2f", 
+                   static_cast<int>(latest_robot_status_.enemy_color), 
+                   latest_robot_status_.robot_speed_mps);
         }
     }
 
@@ -168,7 +172,24 @@ namespace hardware
         assert(expectedIndexOne >= 0 && "[timedserial_new] Elapsed time calculation error!");
         if (expectedIndexOne >= CMDARRAYLENGTH - 1)
         {
-            // 命令数组已耗尽，保留最后一个元素用于插值计算
+            // Visual planning is normally slower than the 100 ms STM32
+            // communication watchdog.  Hold and resend the last command
+            // briefly so a valid, CRC-protected stream reaches the MCU at
+            // the serial loop rate.  On expiry send one explicit no-target
+            // packet, which clears the MCU tracker safely.
+            if (have_fresh_command_ &&
+                now - last_fresh_command_time_ < command_hold_timeout_)
+            {
+                return true;
+            }
+            if (have_fresh_command_)
+            {
+                command_cache_.distance = 0.0f;
+                command_cache_.target_id = 0;
+                command_cache_.fire_enable = 0;
+                have_fresh_command_ = false;
+                return true;
+            }
             return false;
         }
 
@@ -181,7 +202,37 @@ namespace hardware
         // 使用 Planner 提供的姿态数据作为基准
         attitude_cache_ = attitude_at_last_frame_;
 
+        last_fresh_command_time_ = now;
+        have_fresh_command_ = true;
+
         return true;
+    }
+
+    void TimedSerial::apply_tracking_slew_limit(float &yaw_deg, float &pitch_deg,
+                                                 bool target_valid)
+    {
+        if (!target_valid)
+        {
+            filtered_target_initialized_ = false;
+            return;
+        }
+
+        if (!filtered_target_initialized_)
+        {
+            filtered_yaw_deg_ = yaw_deg;
+            filtered_pitch_deg_ = pitch_deg;
+            filtered_target_initialized_ = true;
+            return;
+        }
+
+        // std::remainder chooses the shortest yaw path across +/-180 deg.
+        const float yaw_delta = std::remainder(yaw_deg - filtered_yaw_deg_, 360.0f);
+        filtered_yaw_deg_ += std::clamp(yaw_delta, -yaw_step_limit_deg_, yaw_step_limit_deg_);
+        filtered_pitch_deg_ += std::clamp(
+            pitch_deg - filtered_pitch_deg_, -pitch_step_limit_deg_, pitch_step_limit_deg_);
+
+        yaw_deg = filtered_yaw_deg_;
+        pitch_deg = filtered_pitch_deg_;
     }
 
     TimedSerial::~TimedSerial()
@@ -230,10 +281,16 @@ namespace hardware
                             LOGM_S("[timedserial] Cost time: %lld us", 
                                    (long long)std::chrono::duration_cast<std::chrono::microseconds>(read_time_cost).count());
                     
+                    float yaw_target = attitude_cache_.yaw() + command_cache_.yaw_angle;
+                    float pitch_target = attitude_cache_.pitch() + command_cache_.pitch_angle;
+                    const bool target_valid = command_cache_.target_id != 0 &&
+                                              command_cache_.distance > 0.0f;
+                    apply_tracking_slew_limit(yaw_target, pitch_target, target_valid);
+
                     driver_->transmit_cmd(
-                        attitude_cache_.yaw() + command_cache_.yaw_angle,
-                        attitude_cache_.pitch() + command_cache_.pitch_angle,
+                        yaw_target,
                         command_cache_.yaw_speed,
+                        pitch_target,
                         command_cache_.pitch_speed,
                         command_cache_.yaw_acc,
                         command_cache_.pitch_acc,
@@ -245,10 +302,10 @@ namespace hardware
                     {
                         LOGM_S("[TimedSerial][transmit] p-m:%6.2f | p-s:%6.2f | ps-s:%6.2f | y-m:%6.2f | y-s:%6.2f | ys-s:%6.2f | shoot_s:%6.2f | enemy_color:%d | target_id:%d | in_autoaim:%d | fire:%d",
                                attitude_cache_.pitch(),
-                               attitude_cache_.pitch() + command_cache_.pitch_angle,
+                               pitch_target,
                                command_cache_.pitch_speed,
                                attitude_cache_.yaw(),
-                               attitude_cache_.yaw() + command_cache_.yaw_angle,
+                               yaw_target,
                                command_cache_.yaw_speed,
                                latest_robot_status_.robot_speed_mps,
                                latest_robot_status_.enemy_color==EnemyColor::BLUE,

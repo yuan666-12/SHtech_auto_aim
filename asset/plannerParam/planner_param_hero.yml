@@ -1,6 +1,6 @@
 %YAML:1.0
 ---
-# 步兵4规划器参数
+# 英雄规划器参数（由旧参数迁移，需实车逐项复核）
 
 planner:
   latency: 150                    # Average total latency from PC to yaw action complete (in ms) # 15 

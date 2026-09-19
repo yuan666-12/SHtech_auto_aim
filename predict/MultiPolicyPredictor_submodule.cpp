@@ -12,6 +12,7 @@
  */
 
 #include "MultiPolicyPredictor_submodule.hpp"
+#include <cstdlib>
 
 namespace predict
 {
@@ -108,6 +109,10 @@ namespace predict
         auto tp = data->time;                          // 当前时间戳
         auto &send = data->robotcommand;               // 机器人控制指令结构体
         auto robot_status = data->robotstatus;         // 机器人状态信息
+        const char *test_enemy_blue = std::getenv("AUTOAIM_TEST_ENEMY_BLUE");
+        if (test_enemy_blue != nullptr && test_enemy_blue[0] == '1') {
+            robot_status.enemy_color = EnemyColor::BLUE;
+        }
         auto R_world2imu = data->attitude.R_world2imu(); // 世界坐标系到IMU坐标系的旋转矩阵
         auto &has_fixed_target = data->has_fixed_target;   // 是否包含固定的目标
 
@@ -172,7 +177,18 @@ namespace predict
                 double dist = distance_3D(m_pw);
                 double height = m_pw(2, 0);
 
-                if (dist < max_distance_accept && abs(measurement(2, 0)) < max_yaw_accept && abs(height) < max_height_accept) {
+                if (config_.debug.log_text) {
+                    std::cout << "[predict] candidate id=" << armor.tag_id
+                              << " pnp=" << success
+                              << " measurement=(" << measurement(0, 0) << ","
+                              << measurement(1, 0) << "," << measurement(2, 0) << ")"
+                              << " dist=" << dist << " height=" << height
+                              << std::endl;
+                }
+
+                if (success && dist < max_distance_accept &&
+                    abs(measurement(2, 0)) < max_yaw_accept &&
+                    abs(height) < max_height_accept) {
                     bool already_in_tracking = false;
                     for (int i = 0; i < NUM_TRACKER; ++i) {
                         if (trackers[i].get_tracker_state() != TrackingState::IDLE && armor.tag_id == tracked_armors[i].tag_id) {
@@ -185,10 +201,10 @@ namespace predict
                         armors_in_tracking.push_back(armor);
                     }
                     else {
-                        if (need_new_armors) {
-                            if (armor.source == DetectionSource::TRADITIONAL) {
-                                new_armors.push_back(std::make_pair(armor, dist));
-                            }
+                        if (need_new_armors &&
+                            (armor.source == DetectionSource::TRADITIONAL ||
+                             armor.source == DetectionSource::NEURAL_NETWORK)) {
+                            new_armors.push_back(std::make_pair(armor, dist));
                         }
                     }
                 }

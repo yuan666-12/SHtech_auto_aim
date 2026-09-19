@@ -72,4 +72,32 @@ typedef struct __attribute__((packed))
     uint8_t robot_id;
 } robot_data_t;
 
-#endif //TIMEDSERIAL_UARTIMU_PACKET_H
+// ==================== TWLInfantry XUC Protocol ====================
+
+#pragma pack(push, 1)
+
+struct twl_tx_packet_t   // 上位机 → 下位机
+{
+    uint8_t head[2];        // 'S', 'P'
+    uint8_t control_TJ;     // 是否控制云台
+    uint8_t shoot_TJ;       // 是否开火
+    float yaw_TJ;           // 目标 yaw 角 (rad)
+    float pitch_TJ;         // 目标 pitch 角 (rad)
+    float imu_pitch_TJ;     // IMU 俯仰角 (rad)
+    float imu_yaw_TJ;       // IMU 航向角 (rad)
+    uint16_t crc16_TJ;      // CRC16 校验
+};
+
+struct twl_rx_packet_t   // 下位机 → 上位机
+{
+    uint8_t head[2];        // 'S', 'P'
+    uint8_t mode_TJ;        // 0:空闲, 1:自瞄, 2:小符, 3:大符
+    uint8_t robot_id;       // 3=红方, 103=蓝方
+    float bullet_speed_TJ;  // 弹速 (m/s)
+    uint16_t bullet_count_TJ;
+    uint16_t crc16_TJ;      // CRC16 校验
+};
+
+#pragma pack(pop)
+
+#endif // TIMEDSERIAL_UARTIMU_PACKET_H

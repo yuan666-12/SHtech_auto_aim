@@ -7,6 +7,10 @@
 
 // submodules
 #include <chrono>
+#include <cstdlib>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
 #include <stdexcept>
 #include <thread>
 #include <video/video_wrapper.hpp>
@@ -138,14 +142,158 @@ namespace sensor
             cv::flip(data->frame, data->frame, -1);
         }
 
+        // 自动保存原始帧用于相机标定（无头环境下按固定帧间隔保存，不依赖 GUI/按键）
+        if (config_.save_image && config_.save_interval > 0)
+        {
+            static int frames_since_save = 0;
+            static int saved_counter = 0;
+            static bool dir_created = false;
+
+            if (++frames_since_save >= config_.save_interval)
+            {
+                frames_since_save = 0;
+                cv::Mat gray_for_calibration;
+                cv::Mat gray_small_for_calibration;
+                std::vector<cv::Point2f> calibration_corners;
+                cv::cvtColor(data->frame, gray_for_calibration, cv::COLOR_BGR2GRAY);
+                cv::resize(gray_for_calibration, gray_small_for_calibration,
+                           cv::Size(), 0.5, 0.5, cv::INTER_AREA);
+                const bool board_found = cv::findChessboardCorners(
+                    gray_small_for_calibration, cv::Size(11, 8), calibration_corners,
+                    cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_NORMALIZE_IMAGE);
+
+                if (!board_found)
+                {
+                    LOGM_S("[sensor_submodule] hand-eye sample skipped: 11x8 board not found");
+                }
+                else
+                {
+                    const char* configured_dir = std::getenv("AUTOAIM_CALIBRATION_DIR");
+                    const std::string out_dir = configured_dir != nullptr
+                        ? configured_dir
+                        : "./hero_extrinsic_data_20260904_v2";
+                    if (!dir_created)
+                    {
+                        system(("mkdir -p " + out_dir).c_str());
+                        dir_created = true;
+                    }
+                    const int sample_id = saved_counter++;
+                    const std::string identifier = std::to_string(sample_id);
+                    const std::string filename = out_dir + "/frame_" + identifier + ".png";
+                    cv::imwrite(filename, data->frame);
+                    const std::string euler_filename = out_dir + "/euler_" + identifier + ".txt";
+                    std::ofstream euler_file(euler_filename);
+                    euler_file << std::fixed << std::setprecision(6)
+                               << data->attitude.yaw() << ' '
+                               << data->attitude.pitch() << ' '
+                               << data->attitude.roll() << '\n';
+                    euler_file.close();
+                    LOGM_S("[sensor_submodule] saved hand-eye pair: %s + %s (yaw pitch roll)",
+                           filename.c_str(), euler_filename.c_str());
+                }
+            }
+        }
+
         auto t2 = std::chrono::steady_clock::now();
 
-        // 显示图像（如果需要）
+        // 显示图像（如果需要）；按 p 保存原始帧用于标定
         if (config_.debug.show_image)
         {
-            cv::Mat im2show = data->frame.clone();
+            static int manual_saved_counter = 0;
+            static bool save_dir_created = false;
+            static int save_hint_frames = 0;    // 剩余显示"保存成功"提示的帧数
+            static std::string last_saved_name; // 最近保存的文件名
+
+            // 缩小到适配屏幕的显示尺寸（图像 1440x1080，屏幕 1024x768 且顶部有面板，需同时限制宽高）
+            cv::Mat im2show;
+            const int max_display_width = 800;
+            const int max_display_height = 560;
+            double scale = 1.0;
+            const double scale_w = static_cast<double>(max_display_width) / data->frame.cols;
+            const double scale_h = static_cast<double>(max_display_height) / data->frame.rows;
+            if (scale_w < scale) scale = scale_w;
+            if (scale_h < scale) scale = scale_h;
+            if (scale < 1.0)
+            {
+                cv::resize(data->frame, im2show, cv::Size(), scale, scale, cv::INTER_AREA);
+            }
+            else
+            {
+                im2show = data->frame.clone();
+            }
+
+            // 常驻提示
+            cv::putText(im2show, "CALIBRATION MODE", cv::Point(20, 40),
+                        cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 255, 0), 2);
+            cv::putText(im2show, "Press 'p' to save frame", cv::Point(20, 80),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 0), 2);
+
+            std::ostringstream attitude_text;
+            attitude_text << std::fixed << std::setprecision(2)
+                          << "Yaw: " << data->attitude.yaw()
+                          << "  Pitch: " << data->attitude.pitch()
+                          << "  Roll: " << data->attitude.roll()
+                          << " deg";
+            cv::putText(im2show, attitude_text.str(), cv::Point(20, 120),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.72, cv::Scalar(255, 255, 0), 2);
+
+            // 保存成功提示（短暂显示约 3 秒）
+            if (save_hint_frames > 0)
+            {
+                cv::putText(im2show, "Saved: " + last_saved_name, cv::Point(20, 160),
+                            cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 255), 2);
+                --save_hint_frames;
+            }
+
+            // 棋盘格角点检测与可视化（11x8 内角点），仅在标定模式开启，避免拖慢正常帧率
+            if (config_.calib_detect)
+            {
+                static const cv::Size pattern_size(11, 8);
+                cv::Mat gray;
+                cv::cvtColor(data->frame, gray, cv::COLOR_BGR2GRAY);
+                cv::Mat gray_small;
+                cv::resize(gray, gray_small, cv::Size(), 0.5, 0.5, cv::INTER_AREA);
+                std::vector<cv::Point2f> corners;
+                const bool found = cv::findChessboardCorners(
+                    gray_small, pattern_size, corners,
+                    cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_NORMALIZE_IMAGE);
+                if (found)
+                {
+                    cv::TermCriteria criteria(cv::TermCriteria::EPS + cv::TermCriteria::MAX_ITER, 30, 0.001);
+                    cv::cornerSubPix(gray_small, corners, cv::Size(11, 11), cv::Size(-1, -1), criteria);
+                    // 角点从 0.5 降采样图放大回原图，再缩放到显示图
+                    std::vector<cv::Point2f> corners_scaled;
+                    corners_scaled.reserve(corners.size());
+                    for (const auto &c : corners)
+                        corners_scaled.emplace_back(static_cast<float>(c.x * 2.0 * scale),
+                                                    static_cast<float>(c.y * 2.0 * scale));
+                    cv::drawChessboardCorners(im2show, pattern_size, corners_scaled, true);
+                    cv::putText(im2show, "Detected: " + std::to_string(corners.size()) + " corners",
+                                cv::Point(20, 200), cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 0), 2);
+                }
+                else
+                {
+                    cv::putText(im2show, "No chessboard detected", cv::Point(20, 200),
+                                cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 0, 255), 2);
+                }
+            }
+
             cv::imshow("sensor_submodule", im2show);
-            cv::waitKey(1);
+            int key = cv::waitKey(1);
+            if (key == 'p' || key == 'P')
+            {
+                const std::string out_dir = "./calib_frames";
+                if (!save_dir_created)
+                {
+                    system(("mkdir -p " + out_dir).c_str());
+                    save_dir_created = true;
+                }
+                const std::string filename = out_dir + "/raw_" + std::to_string(manual_saved_counter++) + ".png";
+                cv::imwrite(filename, data->frame);
+                last_saved_name = "raw_" + std::to_string(manual_saved_counter - 1) + ".png";
+                save_hint_frames = 30;
+                LOGM_S("[sensor_submodule] saved raw frame (key p): %s", filename.c_str());
+            }
         }
 
         // 调试信息

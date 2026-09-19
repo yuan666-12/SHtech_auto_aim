@@ -64,6 +64,15 @@ namespace hardware
          * @return  bool 成功返回true，命令数组耗尽返回false
          */
         bool read_latest_command_and_attitude();
+
+        /**
+         * Limit abrupt vision-command steps before they reach the STM32.
+         * This is deliberately a rate limiter rather than a long moving
+         * average: it damps overshoot while retaining a bounded response to
+         * a moving armor plate.
+         */
+        void apply_tracking_slew_limit(float &yaw_deg, float &pitch_deg,
+                                       bool target_valid);
         
         /**
          * @brief   处理来自 Planner 的命令消息（回调函数）
@@ -105,6 +114,20 @@ namespace hardware
         Attitude attitude_cache_{};
         std::chrono::microseconds plan_period_{0};
         std::chrono::steady_clock::time_point command_start_time_{};
+        // Keep the latest valid command on the wire between visual frames.
+        // The STM32 intentionally drops tracking after 100 ms without a
+        // valid packet, while detector/planner frames can take longer.
+        std::chrono::steady_clock::time_point last_fresh_command_time_{};
+        bool have_fresh_command_ = false;
+        static constexpr std::chrono::milliseconds command_hold_timeout_{200};
+
+        // 5 ms is the fixed serial send period.  These limits correspond to
+        // 180 deg/s yaw and 90 deg/s pitch, respectively.
+        bool filtered_target_initialized_ = false;
+        float filtered_yaw_deg_ = 0.0f;
+        float filtered_pitch_deg_ = 0.0f;
+        static constexpr float yaw_step_limit_deg_ = 0.90f;
+        static constexpr float pitch_step_limit_deg_ = 0.45f;
         
         // 来自驱动层的实时数据（受 sensor_mutex_ 保护）
         Attitude latest_attitude_;           /*!< 最新姿态数据 */

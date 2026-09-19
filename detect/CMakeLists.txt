@@ -31,13 +31,13 @@ if(INFERENCE_BACKEND STREQUAL "TRT")
     target_compile_definitions(detect PRIVATE INFERENCE_BACKEND_TYPE=2)
 
 elseif(INFERENCE_BACKEND STREQUAL "ONNX")
-    include_directories(/opt/rocm/include)
+    include_directories(/usr/local/include)
     aux_source_directory(ONNX onnx_src)
 
     add_library(detect OBJECT preprocess_submodule.cpp corner_refine_submodule.cpp detect_submodule.cpp armor_corner_optimizer.cpp ${onnx_src})
 
-    target_link_libraries(detect ${OpenCV_LIBS} migraphx_c)
-    target_link_directories(detect PUBLIC /opt/rocm/lib)
+    target_link_libraries(detect ${OpenCV_LIBS} onnxruntime)
+    target_link_directories(detect PUBLIC /usr/local/lib)
     target_compile_definitions(detect PRIVATE INFERENCE_BACKEND_TYPE=1)
 
 elseif(INFERENCE_BACKEND STREQUAL "AXCL")

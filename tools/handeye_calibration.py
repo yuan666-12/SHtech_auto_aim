@@ -9,13 +9,15 @@ def eulerAnglesToRotationMatrix(theta_deg):
     R_x = np.array([[1, 0, 0],
                     [0, np.cos(pitch), -np.sin(pitch)],
                     [0, np.sin(pitch), np.cos(pitch)]])
-    R_y = np.array([[np.cos(yaw), 0, np.sin(yaw)],
+    R_y = np.array([[np.cos(roll), 0, np.sin(roll)],
                     [0, 1, 0],
-                    [-np.sin(yaw), 0, np.cos(yaw)]])
-    R_z = np.array([[np.cos(roll), -np.sin(roll), 0],
-                    [np.sin(roll), np.cos(roll), 0],
+                    [-np.sin(roll), 0, np.cos(roll)]])
+    R_z = np.array([[np.cos(yaw), -np.sin(yaw), 0],
+                    [np.sin(yaw), np.cos(yaw), 0],
                     [0, 0, 1]])
-    R = R_y @ R_x @ R_z 
+    # Match common/datatype.hpp: yaw(Z), pitch(X), roll(Y).
+    # OpenCV expects gripper(IMU)-to-base(world) rotations here.
+    R = R_z @ R_x @ R_y
     return R
 
 def load_gimbal_euler_angles(directory):
@@ -40,7 +42,7 @@ def find_chessboard_corners(images, board_size, mtx, dist, euler_dict):
     """
     Detect chessboard and return ONLY matched poses with valid gimbal data.
     """
-    square_size = 0.027  # e.g., 30 mm = 0.03 meters
+    square_size = 0.015  # Hero board square size: 15 mm
     objp = np.zeros((board_size[0] * board_size[1], 3), np.float32)
     objp[:, :2] = np.mgrid[0:board_size[0], 0:board_size[1]].T.reshape(-1, 2) * square_size
 
@@ -81,19 +83,19 @@ def find_chessboard_corners(images, board_size, mtx, dist, euler_dict):
     return R_gimbals, rvecs_list, tvecs_list
 
 if __name__ == "__main__":
-    directory = "./handeye_calibration_data/"
-    board_size = (9, 10)
+    directory = "./hero_extrinsic_data_20260904_v2/"
+    board_size = (11, 8)
 
     # Camera intrinsics (reshape to proper matrices)
     mtx = np.array([
-        [1.2547339395758343e+03, 0.0, 6.5664304062954375e+02],
-        [0.0, 1.2570603247026204e+03, 5.4098497764486751e+02],
+        [1.4790807932250757e+03, 0.0, 7.3069968486430150e+02],
+        [0.0, 1.4781439161714959e+03, 5.4818014607939051e+02],
         [0.0, 0.0, 1.0]
     ], dtype=np.float64)
 
-    dist = np.array([-1.0429179533418952e-01, 2.3006199092884119e-01,
-                     2.8035322942038280e-03, 2.1283759009656684e-03,
-                     -1.0136776077957418e-01], dtype=np.float64)
+    dist = np.array([-1.3372672103392352e-01, 2.1795172844506383e-01,
+                     -4.5119642764941177e-04, 8.1427509035456589e-04,
+                     -1.1184162108320281e-01], dtype=np.float64)
 
     # Load gimbal poses as dict
     euler_dict = load_gimbal_euler_angles(directory)
@@ -117,6 +119,6 @@ if __name__ == "__main__":
 
     R_g2c, t_g2c = cv2.calibrateHandEye(R_gimbals, t_gimbals, rvecs, tvecs)
 
-    print("Gimbal to Camera Transformation:")
-    print("Rotation:\n", R_g2c)
-    print("Translation:\n", t_g2c)
+    print("Camera to IMU transformation (candidate R_c2i/T_c2i):")
+    print("R_c2i:\n", R_g2c)
+    print("T_c2i:\n", t_g2c)

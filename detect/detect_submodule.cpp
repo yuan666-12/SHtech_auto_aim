@@ -78,15 +78,32 @@ namespace detect
 
         if (config_.debug.show_image)
         {
-            static const cv::Scalar colors[3] = {{255, 0, 0}, {0, 0, 255}, {255, 255, 255}};
+            // Internal color ids: 0 red, 1 blue, 2 gray (OpenCV uses BGR).
+            static const cv::Scalar colors[3] = {{0, 0, 255}, {255, 0, 0}, {255, 255, 255}};
             cv::Mat im2show = data->frame.clone();
             for (const auto &b : data->bboxes)
             {
-                cv::line(im2show, b.pts[0], b.pts[1], colors[2], 1);
-                cv::line(im2show, b.pts[1], b.pts[2], colors[2], 1);
-                cv::line(im2show, b.pts[2], b.pts[3], colors[2], 1);
-                cv::line(im2show, b.pts[3], b.pts[0], colors[2], 1);
-                cv::putText(im2show, "N", b.pts[0], cv::FONT_HERSHEY_SIMPLEX, 1, colors[b.color_id]);
+                const int color_index = (b.color_id >= 0 && b.color_id < 3) ? b.color_id : 2;
+                const cv::Scalar &box_color = colors[color_index];
+                cv::line(im2show, b.pts[0], b.pts[1], box_color, 4, cv::LINE_AA);
+                cv::line(im2show, b.pts[1], b.pts[2], box_color, 4, cv::LINE_AA);
+                cv::line(im2show, b.pts[2], b.pts[3], box_color, 4, cv::LINE_AA);
+                cv::line(im2show, b.pts[3], b.pts[0], box_color, 4, cv::LINE_AA);
+                const std::string label = "BLUE id=" + std::to_string(b.tag_id);
+                cv::putText(im2show, label, b.pts[0], cv::FONT_HERSHEY_SIMPLEX,
+                            1.0, box_color, 3, cv::LINE_AA);
+            }
+
+            const int max_display_width = 800;
+            const int max_display_height = 560;
+            const double display_scale = std::min(
+                1.0,
+                std::min(static_cast<double>(max_display_width) / im2show.cols,
+                         static_cast<double>(max_display_height) / im2show.rows));
+            if (display_scale < 1.0)
+            {
+                cv::resize(im2show, im2show, cv::Size(), display_scale, display_scale,
+                           cv::INTER_AREA);
             }
 
             static bool dir_created = false;
@@ -111,7 +128,11 @@ namespace detect
             LOGM_S("[detect] Info: detected %ld objects", data->bboxes.size());
             for (const auto &b : data->bboxes)
             {
-                LOGM_S("[detect] Detect_Data: colorid: %d, tag_id: %d", b.color_id, b.tag_id);
+                LOGM_S("[detect] Detect_Data: colorid: %d, tag_id: %d, "
+                       "pts=(%.1f,%.1f)(%.1f,%.1f)(%.1f,%.1f)(%.1f,%.1f)",
+                       b.color_id, b.tag_id,
+                       b.pts[0].x, b.pts[0].y, b.pts[1].x, b.pts[1].y,
+                       b.pts[2].x, b.pts[2].y, b.pts[3].x, b.pts[3].y);
             }
         }
 

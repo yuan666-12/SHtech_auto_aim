@@ -54,6 +54,14 @@ namespace mathutils
                 {-0.0675, 0.028, 0.},   // 左下角点
                 {0.0675, 0.028, 0.},    // 右下角点
                 {0.0675, -0.028, 0.}};  // 右上角点
+
+    // The deployed blue No. 3 test armor has a measured effective outline of
+    // 135 mm x 125 mm, rather than the 135 mm x 56 mm competition small armor.
+inline const std::vector<cv::Point3d> pw_blue_3_test = {
+  {-0.0632, -0.0564, 0.},
+  {-0.0632,  0.0564, 0.},
+  { 0.0632,  0.0564, 0.},
+  { 0.0632, -0.0564, 0.}};
     
     /**
      * @brief 大装甲板的3D模型坐标点

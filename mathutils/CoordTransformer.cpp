@@ -149,7 +149,9 @@ namespace mathutils
                     pw_cur = pw_red_small;  // 小装甲板
             }
             else {
-                if (armor_number == 0 || armor_number == 1 || armor_number == 8)
+            if (armor_number == 3 && std::getenv("AUTOAIM_BLUE3_TEST_TARGET") != nullptr)
+                pw_cur = pw_blue_3_test;
+                else if (armor_number == 0 || armor_number == 1 || armor_number == 8)
                     pw_cur = pw_blue_big;    // 大装甲板
                 else
                     pw_cur = pw_blue_small;  // 小装甲板

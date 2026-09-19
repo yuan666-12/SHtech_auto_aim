@@ -244,6 +244,9 @@ bool init(void)
     sensor_config.debug.log_text = parser.get_bool("sensor_log_text");
     sensor_config.debug.log_file = parser.get_bool("sensor_log_file");
     sensor_config.debug.show_image = parser.get_bool("sensor_show_image");
+    sensor_config.save_image = parser.get_bool("sensor_save_image");
+    sensor_config.save_interval = std::stoi(parser.get_string("sensor_save_interval"));
+    sensor_config.calib_detect = parser.get_bool("sensor_calib_detect");
 
     detect::PreprocessConfig preprocess_config;
     preprocess_config.debug.log_text = parser.get_bool("preprocess_log_text");
@@ -297,8 +300,18 @@ bool init(void)
         // 使用 MockDriver（无硬件模式）
         LOGW_S("[init] Using MockDriver (no hardware mode)");
         driver = std::make_unique<MockDriver>();
+    } else if (port.compare(0, 4, "xuc:") == 0) {
+        // XucDriver — TWLInfantry 裸串口 + 可选 IMU 直连
+        // 格式: xuc:<stm32_dev>[:<imu_dev>]
+        std::string arg = port.substr(4);
+        auto sep = arg.find(':');
+        std::string stm32_dev = (sep != std::string::npos) ? arg.substr(0, sep) : arg;
+        std::string imu_dev   = (sep != std::string::npos) ? arg.substr(sep + 1) : "";
+        LOGM_S("[init] Using XucDriver: stm32=%s, imu=%s",
+               stm32_dev.c_str(), imu_dev.empty() ? "(none)" : imu_dev.c_str());
+        driver = std::make_unique<XucDriver>(stm32_dev, imu_dev);
     } else {
-        // 使用真实的 UartDriver
+        // 使用真实的 UartDriver（RMCVSerial）
         LOGM_S("[init] Using UartDriver with port: %s", port.c_str());
         driver = std::make_unique<UartDriver>(port);
     }

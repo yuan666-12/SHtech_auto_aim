@@ -1,40 +1,37 @@
-#ifndef _ONNXMODULE_HPP_
-#define _ONNXMODULE_HPP_
+#ifndef ONNX_HPP
+#define ONNX_HPP
 
-#include <opencv2/core.hpp>
-#include <opencv2/imgproc.hpp>
-#include "common.hpp" 
-#include "../backend.hpp"
-#include <migraphx/migraphx.hpp>
+#include "backend.hpp"
+#include <onnxruntime_cxx_api.h>
+#include <string>
 #include <vector>
+#include <memory>
 
-class ONNX : public BackEnd
-{
+class ONNX : public BackEnd {
 public:
-    static constexpr int INPUT_W = 640;
-    static constexpr int INPUT_H = 512;
-    static constexpr int TOPK_NUM = 128;
-    static constexpr float CONF_THRESH = 0.65f; 
-    static constexpr float LOGIT_THRESH = 0.619f; 
-    static constexpr float NMS_THRESH = 0.45f;
-
-    explicit ONNX(const std::string &onnx_file);
-
-    void build_engine_from_onnx(const std::string &onnx_file);
-    void build_engine_from_cache(const std::string &cache_file_path);
-    void cache_engine(const std::string &cache_file_path);
-
-    ~ONNX();
-
-    ONNX(const ONNX &) = delete;
-    ONNX operator=(const ONNX &) = delete;
-
+    explicit ONNX(const std::string &model_path);
+    ~ONNX() override = default;
     void operator()(const cv::Mat &src, std::vector<bbox_t> &det) override;
 
 private:
-    migraphx::program net;
+    void preprocess(const cv::Mat &src, std::vector<float> &input_tensor_values);
+    void postprocess(const float* output_data, size_t output_count,
+                     std::vector<bbox_t> &det, float scale_x, float scale_y);
+
+    Ort::Env env_;
+    Ort::SessionOptions session_options_;
+    std::unique_ptr<Ort::Session> session_;
+    Ort::MemoryInfo memory_info_;
+
+    // ONNX 1.17+ 需要用 string 存名字，保持生命周期
+    std::vector<std::string> input_names_str_;
+    std::vector<std::string> output_names_str_;
+    std::vector<const char*> input_names_;
+    std::vector<const char*> output_names_;
+    std::vector<int64_t> input_shape_;
     
-    std::vector<float> inputTensorValues;
+    static constexpr int input_w_ = 640;
+    static constexpr int input_h_ = 512;
 };
 
-#endif /* _ONNXMODULE_HPP_ */
+#endif // ONNX_HPP
