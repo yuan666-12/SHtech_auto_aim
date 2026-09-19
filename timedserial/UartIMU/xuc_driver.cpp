@@ -13,6 +13,14 @@
 #include <termios.h>
 #include <unistd.h>
 #include <utility>
+#include <cstdio>
+#include <chrono>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <mutex>
+#include <sstream>
 
 namespace {
 constexpr float MIN_BULLET_SPEED_MPS = 10.0f;
@@ -27,6 +35,65 @@ bool test_enemy_blue()
 {
     const char* value = std::getenv("AUTOAIM_TEST_ENEMY_BLUE");
     return value != nullptr && std::strcmp(value, "1") == 0;
+}
+
+bool xuc_dry_run()
+{
+    const char* value = std::getenv("AUTOAIM_XUC_DRY_RUN");
+    return value != nullptr && std::strcmp(value, "1") == 0;
+}
+
+bool xuc_debug()
+{
+    const char* debug = std::getenv("AUTOAIM_XUC_DEBUG");
+    const char* dry_run = std::getenv("AUTOAIM_XUC_DRY_RUN");
+    return (debug != nullptr && std::strcmp(debug, "1") == 0) ||
+           (dry_run != nullptr && std::strcmp(dry_run, "1") == 0);
+}
+
+std::string hex_dump(const uint8_t* data, size_t len)
+{
+    std::string out;
+    out.reserve(len * 3);
+    char byte[4]{};
+    for (size_t i = 0; i < len; ++i) {
+        std::snprintf(byte, sizeof(byte), "%02X", data[i]);
+        if (i != 0) out.push_back(' ');
+        out.append(byte);
+    }
+    return out;
+}
+
+void append_xuc_debug_file(const std::string& line)
+{
+    static std::mutex mutex;
+    static std::ofstream file;
+    static bool initialized = false;
+    std::lock_guard<std::mutex> lock(mutex);
+
+    if (!initialized) {
+        initialized = true;
+        const auto start = std::chrono::system_clock::now();
+        const std::time_t start_time = std::chrono::system_clock::to_time_t(start);
+        std::tm start_local{};
+        localtime_r(&start_time, &start_local);
+        std::ostringstream filename;
+        filename << PROJECT_DIR << "/log/xuc/xuc_"
+                 << std::put_time(&start_local, "%Y-%m-%d-%H-%M-%S") << ".log";
+        std::error_code error;
+        std::filesystem::create_directories(
+            std::filesystem::path(PROJECT_DIR) / "log/xuc", error);
+        file.open(filename.str(), std::ios::app);
+    }
+    if (!file) return;
+
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t now_time = std::chrono::system_clock::to_time_t(now);
+    std::tm local_time{};
+    localtime_r(&now_time, &local_time);
+    file << std::put_time(&local_time, "%Y-%m-%d %H:%M:%S")
+         << " " << line << '\n';
+    file.flush();
 }
 
 bool track_only()
@@ -169,7 +236,12 @@ void XucDriver::transmit_cmd(float yaw, float yaw_spd, float pitch, float pitch_
 {
     // Hand-eye collection must never command the lower controller.  This is
     // deliberately opt-in so normal runtime behaviour is unchanged.
-    if (calibration_rx_only() || !fire_mode_enabled_.load()) return;
+    // Bit 7 grants the auto-aim link. Dry-run allows packet construction and
+    // logging while guaranteeing that nothing is written to the UART.
+    if (calibration_rx_only()) return;
+    const bool fire_mode_enabled = fire_mode_enabled_.load();
+    const bool dry_run = xuc_dry_run();
+    if (!fire_mode_enabled && !dry_run) return;
 
     (void)yaw_acc;
     (void)pitch_acc;
@@ -204,6 +276,21 @@ void XucDriver::transmit_cmd(float yaw, float yaw_spd, float pitch, float pitch_
     pkt[21] = track_only() ? 0U : static_cast<uint8_t>(shoot & 0x01);
     put_float(25, 0.0f);
     append_crc16(pkt.data(), pkt.size());
+
+    const std::string raw = hex_dump(pkt.data(), pkt.size());
+    std::ostringstream debug;
+    debug << "[TX" << (dry_run ? "/DRY_RUN" : "")
+          << (fire_mode_enabled ? "/ENABLED" : "/BLOCKED") << "] pitch="
+          << std::fixed << std::setprecision(3)
+          << constrained_pitch << " yaw=" << yaw
+          << " yaw_diff=" << yaw_spd << " pitch_diff=" << pitch_spd
+          << " distance=" << ((target_id != 0) ? dist : 0.0f)
+          << " fire=" << static_cast<unsigned>(pkt[21])
+          << " v_y=0 raw=" << raw;
+    append_xuc_debug_file(debug.str());
+    if (xuc_debug()) LOGM_S("[HeroXuc]%s", debug.str().c_str());
+
+    if (dry_run || !fire_mode_enabled) return;
 
     const ssize_t written = write_port(pkt.data(), pkt.size());
     if (written == static_cast<ssize_t>(pkt.size())) {
@@ -294,6 +381,20 @@ bool XucDriver::process_status_packet(const uint8_t* data)
     }
 
     rx_fps_.count();
+
+    const std::string raw = hex_dump(data, sizeof(HeroXucStatusPacket));
+    std::ostringstream debug;
+    debug << "[RX] color="
+          << ((pkt.flags & HeroXucFlags::DetectColor) ? 1U : 0U)
+          << " reset_tracker="
+          << ((pkt.flags & HeroXucFlags::ResetTracker) ? 1U : 0U)
+          << " fire_mode=" << (fire_mode ? 1U : 0U)
+          << " roll=" << std::fixed << std::setprecision(3) << pkt.roll
+          << " pitch=" << pkt.pitch << " yaw=" << pkt.yaw
+          << " aim=(" << pkt.aim_x << "," << pkt.aim_y << "," << pkt.aim_z
+          << ") raw=" << raw;
+    append_xuc_debug_file(debug.str());
+    if (xuc_debug()) LOGM_S("[HeroXuc]%s", debug.str().c_str());
 
     if (attitude_cb_) {
         attitude_cb_(Attitude(pkt.yaw, pkt.pitch, pkt.roll));
