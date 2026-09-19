@@ -20,17 +20,19 @@
 
 #pragma pack(push, 1)
 struct HeroXucStatusPacket {
-    uint8_t header;       // 0x5A
-    uint8_t flags;        // bit0 detect_color, bit1 reset_tracker, bit7 fire_mode
-    float roll;           // degrees, from imu_pantile.GetAngleRoll()
-    float pitch;          // degrees, from imu_pantile.GetAnglePitch()
-    float yaw;            // degrees, from imu_pantile.GetAngleYaw()
-    float aim_x;
-    float aim_y;
-    float aim_z;
-    uint16_t checksum;    // CRC16, low byte first
+    // STM32 -> NUC: 28-byte status/attitude packet.
+    uint8_t header;       // byte 0, fixed 0x5A
+    uint8_t flags;        // byte 1: bit0 enemy color (0 red/1 blue),
+                          // bit1 reset_tracker, bits2..6 reserved,
+                          // bit7 fire_mode (1 enables the auto-aim link)
+    float roll;           // bytes 2..5, degrees, IMU roll
+    float pitch;          // bytes 6..9, degrees, IMU pitch
+    float yaw;            // bytes 10..13, degrees, IMU yaw
+    float aim_x;          // bytes 14..17, currently ignored by the NUC driver
+    float aim_y;          // bytes 18..21, currently ignored by the NUC driver
+    float aim_z;          // bytes 22..25, currently ignored by the NUC driver
+    uint16_t checksum;    // bytes 26..27, CRC16 of bytes 0..25, low byte first
 };
-
 namespace HeroXucFlags {
 constexpr uint8_t DetectColor = 1u << 0;
 constexpr uint8_t ResetTracker = 1u << 1;
@@ -38,16 +40,17 @@ constexpr uint8_t FireMode = 1u << 7;
 } // namespace HeroXucFlags
 
 struct HeroXucControlPacket {
-    uint8_t header;       // 0xA5
-    float pitch;          // degrees; STM32 converts to radians
-    float yaw;            // degrees; STM32 currently keeps this value as-is
-    float yaw_diff;       // degrees/s or feedforward value for STM32 side
-    float pitch_diff;     // degrees/s; STM32 converts to radians
-    float distance;       // meters; <=0 means no target
-    uint8_t fireadvice;   // bit0 only; keep 0 unless planner explicitly asks
-    uint8_t reserved[3];  // pad so v_y starts at offset 25, matching xuc.cpp
-    float v_y;
-    uint16_t checksum;    // CRC16, low byte first
+    // NUC -> STM32: 31-byte gimbal-control packet.
+    uint8_t header;       // byte 0, fixed 0xA5
+    float pitch;          // bytes 1..4, target pitch angle, degrees
+    float yaw;            // bytes 5..8, target yaw angle, degrees
+    float yaw_diff;       // bytes 9..12, yaw angular rate/feedforward, deg/s
+    float pitch_diff;     // bytes 13..16, pitch angular rate/feedforward, deg/s
+    float distance;       // bytes 17..20, target distance, metres; <=0 no target
+    uint8_t fireadvice;   // byte 21, bit0 is the fire recommendation
+    uint8_t reserved[3];  // bytes 22..24, protocol padding
+    float v_y;            // bytes 25..28, reserved motion term; currently 0
+    uint16_t checksum;    // bytes 29..30, CRC16 of bytes 0..28, low byte first
 };
 #pragma pack(pop)
 
