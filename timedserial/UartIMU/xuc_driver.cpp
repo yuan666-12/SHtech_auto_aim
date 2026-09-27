@@ -25,12 +25,6 @@
 namespace {
 constexpr float MIN_BULLET_SPEED_MPS = 10.0f;
 
-bool calibration_rx_only()
-{
-    const char* value = std::getenv("AUTOAIM_CALIBRATION_RX_ONLY");
-    return value != nullptr && std::strcmp(value, "1") == 0;
-}
-
 bool test_enemy_blue()
 {
     const char* value = std::getenv("AUTOAIM_TEST_ENEMY_BLUE");
@@ -99,7 +93,8 @@ void append_xuc_debug_file(const std::string& line)
 bool track_only()
 {
     const char* value = std::getenv("AUTOAIM_TRACK_ONLY");
-    return value != nullptr && std::strcmp(value, "1") == 0;
+    // 默认只跟踪，不给出开火建议；显式设置为 0 才允许开火建议。
+    return value == nullptr || std::strcmp(value, "1") == 0;
 }
 
 bool configure_port(int fd, speed_t baud)
@@ -238,7 +233,6 @@ void XucDriver::transmit_cmd(float yaw, float yaw_spd, float pitch, float pitch_
     // deliberately opt-in so normal runtime behaviour is unchanged.
     // Bit 7 grants the auto-aim link. Dry-run allows packet construction and
     // logging while guaranteeing that nothing is written to the UART.
-    if (calibration_rx_only()) return;
     const bool fire_mode_enabled = fire_mode_enabled_.load();
     const bool dry_run = xuc_dry_run();
     if (!fire_mode_enabled && !dry_run) return;

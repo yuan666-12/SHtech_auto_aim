@@ -1,8 +1,8 @@
 .vscode/
 MvSdkLog/
 build/
+build_real/
 data/
-log/
 logs/
 *.cache
 bash/auto-aim-start.sh
