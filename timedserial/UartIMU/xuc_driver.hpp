@@ -1,5 +1,7 @@
 //
 // Hero XUC driver.
+// Wire yaw: clockwise decreases (top view). Pitch: upward increases.
+// RX yaw and TX yaw/rate retain the same sign used by the planner.
 //
 // Matches Yang-pure/hero STM32F405/xuc.cpp as of commit eaa237f:
 //   STM32 -> NUC: 0x5A, 28 bytes, packed TxPacket

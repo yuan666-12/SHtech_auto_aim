@@ -13,6 +13,7 @@
 
 #include "MultiPolicyPredictor_submodule.hpp"
 #include <cstdlib>
+#include "armor_policy.hpp"
 
 namespace predict
 {
@@ -46,6 +47,8 @@ namespace predict
             cv::createTrackbar("in_autoaim_mode", "predictor trackbar", &in_autoaim_mode_adjust, 1, 0);
         }
 
+        LOGM_S("[MultiPolicyPredictorSubModule] ignore armor id: %s (enemy color retained)",
+               armor_policy::ignore_armor_id() ? "ON, 135x56 mm small armor" : "OFF, original digit policy");
         LOGM_S("[MultiPolicyPredictorSubModule] construction completed");
     }
 
@@ -103,7 +106,11 @@ namespace predict
         // LOGT_S();
 
         // === 提取数据包信息 ===
-        auto &detected_armors = data->bboxes;          // 检测到的装甲板列表
+        auto detected_armors = data->bboxes; // Copy; preserve original detector labels.
+        const bool ignore_ids = armor_policy::ignore_armor_id();
+        for (auto &armor : detected_armors) {
+            armor.tag_id = armor_policy::tracking_id(armor.tag_id, ignore_ids);
+        }
         auto attitude_yaw = data->attitude.yaw() / 180 * M_PI;      // 机器人偏航角（转换为弧度）
         auto attitude_pitch = data->attitude.pitch() / 180 * M_PI;  // 机器人俯仰角（转换为弧度）
         auto tp = data->time;                          // 当前时间戳
@@ -300,6 +307,19 @@ namespace predict
                         // 计算位置变化
                         Eigen::Matrix<double, 3, 1> measured_pw(measured_measurement(1, 0), measured_measurement(0, 0), measured_measurement(2, 0));
                         Eigen::Matrix<double, 3, 1> tracked_pw(tracked_measurement(1, 0), tracked_measurement(0, 0), tracked_measurement(2, 0));
+
+                        if (ignore_ids) {
+                            // Match nearest position regardless of digit classification.
+                            // Do not pair unrelated detections as two vehicle armors.
+                            const double diff = (tracked_pw - measured_pw).norm();
+                            if (diff < min_position_diff) {
+                                min_position_diff = diff;
+                                selected_armor = armor;
+                                selected_measurement = measured_measurement;
+                                same_id_armor_count = 1;
+                            }
+                            continue;
+                        }
 
                         same_id_armor_count++;
 

@@ -189,6 +189,7 @@ struct EntryStageToFoxgloveAliveMessage {
 
 struct SensorFromSerialAttitudeMessage {
     Attitude attitude;
+    std::chrono::steady_clock::time_point received_at{}; // Actual driver callback time.
 };
 
 struct SensorFromSerialRobotStatusMessage {

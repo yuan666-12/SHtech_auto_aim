@@ -8,8 +8,8 @@ import os
 import cv2
 import numpy as np
 
-BOARD = (11, 8)
-SQUARE_M = 0.015
+BOARD = (9, 7)
+SQUARE_M = 0.020
 K = np.array([[1479.0807932250757, 0., 730.6996848643015],
               [0., 1478.1439161714959, 548.1801460793905],
               [0., 0., 1.]], np.float64)

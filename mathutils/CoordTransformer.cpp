@@ -6,6 +6,7 @@
  */
 
 #include "CoordTransformer.hpp"
+#include "armor_policy.hpp"
 
 namespace mathutils
 {
@@ -129,7 +130,11 @@ namespace mathutils
     {
         // 根据装甲板编号选择对应的3D模型尺寸
         std::vector<cv::Point3d> pw_cur;
-        if (adjust) {
+        if (armor_policy::ignore_armor_id()) {
+            // Provincial mode uses the confirmed 135 x 56 mm geometry for every label.
+            pw_cur = color_id == 0 ? pw_red_small : pw_blue_small;
+        }
+        else if (adjust) {
             double pw_x = pw_length / 1000.0 / 2.0;
             double pw_y = pw_width / 1000.0 / 2.0;
 

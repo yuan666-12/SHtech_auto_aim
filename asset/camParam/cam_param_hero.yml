@@ -1,9 +1,12 @@
 %YAML:1.0
 ---
-# Hero extrinsic candidate from robust joint optimization of validation run1/run2.
-# Uses stationary samples and chessboard geometric centers; Huber loss suppresses
-# planar-PnP outliers in run1. Translation length constrained by mechanical
-# measurement (about 178.17 mm). Not yet activated in launch.cfg.
+# Active Hero extrinsics, updated 2026-10-12 with user approval.
+# R: R-only robust hand-eye result, 33/34 samples; direction RMS 0.529515 deg.
+# Data: hero_extrinsic_20261012_180418_443261; sample 27 excluded for R.
+# T: true IMU measurement reference point to camera optical center.
+# Components in runtime IMU axes: left, up, forward; units: metres.
+# Mechanical interpretation confirmed from physical position: 153.78, 32.03, 2.79 mm.
+# Transform: p_IMU = R_c2i * p_camera + T_c2i.
 K: !!opencv-matrix
    rows: 3
    cols: 3
@@ -21,11 +24,11 @@ R_c2i: !!opencv-matrix
    rows: 3
    cols: 3
    dt: d
-   data: [ -9.928352845e-01, 7.23008031e-02, 9.51351236e-02,
-           -8.31855299e-02, -9.897685237e-01, -1.159242733e-01,
-            8.57803327e-02, -1.230075746e-01, 9.886914944e-01 ]
+   data: [ -0.999375797806 , 0.033545683377 , 0.011077088334,
+           -0.033364800895 , -0.999313081877 , 0.016129304101,
+           0.011610547809 , 0.015749651307 , 0.999808553506 ]
 T_c2i: !!opencv-matrix
    rows: 3
    cols: 1
    dt: d
-   data: [ 9.2238e-02, 1.41538e-01, 5.6808e-02 ]
+   data: [ 0.153780000000 , 0.032030000000 , 0.002790000000 ]

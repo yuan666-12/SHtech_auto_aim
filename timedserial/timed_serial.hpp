@@ -130,6 +130,7 @@ namespace hardware
         static constexpr float pitch_step_limit_deg_ = 0.45f;
         
         // 来自驱动层的实时数据（受 sensor_mutex_ 保护）
+        std::chrono::steady_clock::time_point latest_attitude_received_at_{};
         Attitude latest_attitude_;           /*!< 最新姿态数据 */
         RobotStatus latest_robot_status_;    /*!< 最新机器人状态 */
         

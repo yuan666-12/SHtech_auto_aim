@@ -117,6 +117,7 @@
  */
 
 
+#include <cstdlib>
 #include "main.hpp"
 
 
@@ -203,7 +204,8 @@ bool init(void)
     screen = new Log();
 
     try {
-    cmd_parser parser("launch.cfg");
+    const char* launch_config = std::getenv("AUTOAIM_CONFIG");
+    cmd_parser parser(launch_config && *launch_config ? launch_config : "launch.cfg");
 
     LOGM_F("open log file success!");
     LOGM_S("open log file success!");

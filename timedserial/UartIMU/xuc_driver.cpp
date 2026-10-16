@@ -3,6 +3,7 @@
 //
 
 #include "xuc_driver.hpp"
+#include "xuc_conventions.hpp"
 
 #include <cerrno>
 #include <array>
@@ -74,10 +75,12 @@ void append_xuc_debug_file(const std::string& line)
         std::ostringstream filename;
         filename << PROJECT_DIR << "/log/xuc/xuc_"
                  << std::put_time(&start_local, "%Y-%m-%d-%H-%M-%S") << ".log";
+        const char* custom_log = std::getenv("AUTOAIM_XUC_LOG_FILE");
+        const std::string log_path = custom_log && *custom_log ? custom_log : filename.str();
         std::error_code error;
-        std::filesystem::create_directories(
-            std::filesystem::path(PROJECT_DIR) / "log/xuc", error);
-        file.open(filename.str(), std::ios::app);
+        const auto parent = std::filesystem::path(log_path).parent_path();
+        if (!parent.empty()) std::filesystem::create_directories(parent, error);
+        file.open(log_path, std::ios::app);
     }
     if (!file) return;
 
@@ -85,7 +88,10 @@ void append_xuc_debug_file(const std::string& line)
     const std::time_t now_time = std::chrono::system_clock::to_time_t(now);
     std::tm local_time{};
     localtime_r(&now_time, &local_time);
+    const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now.time_since_epoch()).count() % 1000;
     file << std::put_time(&local_time, "%Y-%m-%d %H:%M:%S")
+         << '.' << std::setfill('0') << std::setw(3) << milliseconds << std::setfill(' ')
          << " " << line << '\n';
     file.flush();
 }
@@ -261,9 +267,11 @@ void XucDriver::transmit_cmd(float yaw, float yaw_spd, float pitch, float pitch_
     const auto put_float = [&pkt](size_t offset, float value) {
         std::memcpy(pkt.data() + offset, &value, sizeof(value));
     };
+    const float mcu_yaw = xuc_conventions::mcu_yaw_from_internal(yaw);
+    const float mcu_yaw_spd = xuc_conventions::mcu_yaw_from_internal(yaw_spd);
     put_float(1, constrained_pitch);
-    put_float(5, yaw);
-    put_float(9, yaw_spd);
+    put_float(5, mcu_yaw);
+    put_float(9, mcu_yaw_spd);
     put_float(13, pitch_spd);
     put_float(17, (target_id != 0) ? dist : 0.0f);
     // Tracking trials may actuate yaw/pitch but must never advise firing.
@@ -276,11 +284,11 @@ void XucDriver::transmit_cmd(float yaw, float yaw_spd, float pitch, float pitch_
     debug << "[TX" << (dry_run ? "/DRY_RUN" : "")
           << (fire_mode_enabled ? "/ENABLED" : "/BLOCKED") << "] pitch="
           << std::fixed << std::setprecision(3)
-          << constrained_pitch << " yaw=" << yaw
-          << " yaw_diff=" << yaw_spd << " pitch_diff=" << pitch_spd
+          << constrained_pitch << " yaw=" << mcu_yaw
+          << " yaw_diff=" << mcu_yaw_spd << " pitch_diff=" << pitch_spd
           << " distance=" << ((target_id != 0) ? dist : 0.0f)
           << " fire=" << static_cast<unsigned>(pkt[21])
-          << " v_y=0 raw=" << raw;
+          << " yaw_internal=" << yaw << " v_y=0 raw=" << raw;
     append_xuc_debug_file(debug.str());
     if (xuc_debug()) LOGM_S("[HeroXuc]%s", debug.str().c_str());
 
@@ -385,13 +393,15 @@ bool XucDriver::process_status_packet(const uint8_t* data)
           << " fire_mode=" << (fire_mode ? 1U : 0U)
           << " roll=" << std::fixed << std::setprecision(3) << pkt.roll
           << " pitch=" << pkt.pitch << " yaw=" << pkt.yaw
+          << " yaw_internal=" << xuc_conventions::internal_yaw_from_mcu(pkt.yaw)
           << " aim=(" << pkt.aim_x << "," << pkt.aim_y << "," << pkt.aim_z
           << ") raw=" << raw;
     append_xuc_debug_file(debug.str());
     if (xuc_debug()) LOGM_S("[HeroXuc]%s", debug.str().c_str());
 
     if (attitude_cb_) {
-        attitude_cb_(Attitude(pkt.yaw, pkt.pitch, pkt.roll));
+        attitude_cb_(Attitude(xuc_conventions::internal_yaw_from_mcu(pkt.yaw),
+                              pkt.pitch, pkt.roll));
     }
 
     RobotStatus sts{};

@@ -31,7 +31,9 @@ namespace hardware
         });
 
         attitude_bridge_.set_provider([this]() {
-            return pipeline::bridge::SensorFromSerialAttitudeMessage{this->handle_attitude_get()}; 
+            std::lock_guard<std::mutex> lock(sensor_mutex_);
+            return pipeline::bridge::SensorFromSerialAttitudeMessage{
+                latest_attitude_, latest_attitude_received_at_};
         });
 
         status_bridge_.set_provider([this]() {
@@ -87,6 +89,7 @@ namespace hardware
     {
         std::lock_guard<std::mutex> lock(sensor_mutex_);
         latest_attitude_ = att;
+        latest_attitude_received_at_ = std::chrono::steady_clock::now();
         
         if (config_.debug.log_text)
         {

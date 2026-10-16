@@ -12,6 +12,8 @@
  */
 
 #include "Planner.hpp"
+#include <cstdlib>
+#include <stdexcept>
 
 // === 评测标准开关 ===
 #define ASSESSMENT_CRITERIA 0
@@ -53,6 +55,13 @@ namespace predict
         fin["planner"]["disable_vehicle_center_shoot_mode"] >> disable_vehicle_center_shoot_mode;
         fin["planner"]["disable_armor_with_vehicle_shoot_mode"] >> disable_armor_with_vehicle_shoot_mode;
         fin["planner"]["consider_air_resistence"] >> consider_air_resistence;
+        if (!fin["planner"]["geometry_only"].empty())
+            fin["planner"]["geometry_only"] >> geometry_only;
+        if (geometry_only) {
+            const char* dry_run = std::getenv("AUTOAIM_XUC_DRY_RUN");
+            if (!dry_run || std::string(dry_run) != "1")
+                throw std::runtime_error("geometry_only requires AUTOAIM_XUC_DRY_RUN=1");
+        }
 
         shoot_offset = static_cast<int>(continue_shoot_latency / DT);
 
@@ -604,7 +613,7 @@ namespace predict
      * @param R_world2imu 世界坐标系到IMU坐标系的旋转矩阵
      * @return [target_yaw, target_pitch] 云台目标角度
      * @details 考虑弹道下降，计算云台应达到的偏航角和俯仰角
-     *          弹道补偿：z = z0 - 0.5 * g * t²
+     *          弹道补偿：z = z0 + 0.5 * g * t²
      *          通过坐标变换计算IMU坐标系下的角度
      */
     Eigen::Matrix<double, 2, 1> Planner::cal_gimbal_target(Eigen::Matrix<double, 3, 1> aimed_armor_pos,
@@ -616,8 +625,10 @@ namespace predict
         Pos3D pw{aimed_armor_pos(0, 0), aimed_armor_pos(1, 0), aimed_armor_pos(2, 0)};
 
         // 计算弹丸飞行时间并进行弹道补偿
-        double fly_time = cal_fly_time(pw, bullet_speed, consider_air_resistence);
-        pw(2, 0) -= 0.5 * g * fly_time * fly_time;  // 重力下降补偿
+        if (!geometry_only) {
+            double fly_time = cal_fly_time(pw, bullet_speed, consider_air_resistence);
+            pw(2, 0) += 0.5 * g * fly_time * fly_time;  // World Z points up.
+        }
 
         // 世界坐标系转换为IMU坐标系
         Pos3D pi = coord_transformer.pw_to_pi(pw, R_world2imu);   

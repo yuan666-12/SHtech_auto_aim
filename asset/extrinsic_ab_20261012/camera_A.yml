@@ -1,0 +1,29 @@
+%YAML:1.0
+---
+# A/B geometry-only DRY_RUN candidate A: R-only plus mechanical translation
+# TRUE IMU origin; axes left/up/forward, metres.
+K: !!opencv-matrix
+   rows: 3
+   cols: 3
+   dt: d
+   data: [ 1.4790807932250757e+03, 0., 7.3069968486430150e+02, 0.,
+       1.4781439161714959e+03, 5.4818014607939051e+02, 0., 0., 1. ]
+D: !!opencv-matrix
+   rows: 1
+   cols: 5
+   dt: d
+   data: [ -1.3372672103392352e-01, 2.1795172844506383e-01,
+       -4.5119642764941177e-04, 8.1427509035456589e-04,
+       -1.1184162108320281e-01 ]
+R_c2i: !!opencv-matrix
+   rows: 3
+   cols: 3
+   dt: d
+   data: [ -0.999375797806, 0.033545683377, 0.011077088334,
+           -0.033364800895, -0.999313081877, 0.016129304101,
+           0.011610547809, 0.015749651307, 0.999808553506 ]
+T_c2i: !!opencv-matrix
+   rows: 3
+   cols: 1
+   dt: d
+   data: [ 0.153780000000, 0.032030000000, 0.002790000000 ]
