@@ -18,6 +18,7 @@
 #include "common.hpp"
 #include "IESEKF.hpp"
 #include "Kalman.hpp"
+#include "tracking_policy.hpp"
 #include "math_tools.hpp"
 #include "IESEKF_Double_Armor.hpp"
 
@@ -77,7 +78,7 @@ namespace predict
         
         // on axcl
         /// @brief 暂时丢失计数阈值，丢失超过此值返回空闲状态
-        const int temp_lost_counter_threshold = 30;
+        // Visual loss is bounded in seconds, independently of detector FPS.
 
         const double yaw_speed_diverge_threshold = 3;
 
@@ -221,6 +222,7 @@ namespace predict
         
         /// @brief 暂时丢失计数器
         int temp_lost_counter;
+        tracking_policy::ObservationGate observation_gate;
 
         /// @brief 暂时丢失时间点
         TP temp_lost_tp;
@@ -283,7 +285,7 @@ namespace predict
          * @param same_id_armor_count 检测到同ID装甲板的数量
          * @details 根据检测结果更新跟踪器在IDLE、DETECTING、TRACKING、TEMP_LOST之间的状态转换
          */
-        void update_tracker_state(const double same_id_armor_count);
+        void update_tracker_state(const double same_id_armor_count, const TP &tp);
 
         /**
          * @brief 跟踪模型选择策略

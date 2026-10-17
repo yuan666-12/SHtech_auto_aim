@@ -9,6 +9,8 @@
 
 //packages
 #include <opencv2/core/core.hpp>
+#include <chrono>
+#include <cstdint>
 
 /**
  * @brief A virtual class for wrapper of camera and video files
@@ -22,6 +24,10 @@ public:
     virtual bool read(cv::Mat &src, bool debug = false) = 0;
     virtual bool setBrightness(int brightness) = 0;
     virtual int getFps() = 0;
+    virtual std::chrono::steady_clock::time_point frame_received_at() const { return {}; }
+    virtual uint64_t frame_number() const { return 0; }
+    virtual int64_t host_timestamp() const { return 0; }
+    virtual uint64_t device_timestamp() const { return 0; }
     virtual cv::Size getSize() = 0;
     virtual bool close(bool debug = false) = 0;
 };

@@ -36,6 +36,12 @@ namespace hardware
                 latest_attitude_, latest_attitude_received_at_};
         });
 
+        attitude_bridge_.set_time_provider([this](std::chrono::steady_clock::time_point stamp) {
+            std::lock_guard<std::mutex> lock(sensor_mutex_);
+            const auto sample = attitude_history_.sample(stamp);
+            return pipeline::bridge::SensorFromSerialAttitudeMessage{
+                sample.attitude,sample.received_at,sample.valid,sample.error_ms};
+        });
         status_bridge_.set_provider([this]() {
             return pipeline::bridge::SensorFromSerialRobotStatusMessage{this->handle_robotstatus_get()};
         });
@@ -86,6 +92,7 @@ namespace hardware
         std::lock_guard<std::mutex> lock(command_mutex_);
         command_start_time_ = std::chrono::steady_clock::now();
         attitude_at_last_frame_ = pose;
+        observation_deadline_ = msg.observation_deadline;
         plan_period_ = valid ? msg.plan_period : std::chrono::microseconds{2000};
         command_array_ = valid ? msg.command_array : command_array_t{};
         if (!valid) {
@@ -105,6 +112,7 @@ namespace hardware
         std::lock_guard<std::mutex> lock(sensor_mutex_);
         latest_attitude_ = att;
         latest_attitude_received_at_ = std::chrono::steady_clock::now();
+        attitude_history_.push(latest_attitude_received_at_,att);
         
         if (config_.debug.log_text)
         {
@@ -177,6 +185,15 @@ namespace hardware
     {
         std::lock_guard<std::mutex> lock(command_mutex_);
         if (plan_period_.count() <= 0) return false;
+        if (command_array_.front().target_id != 0 &&
+            (observation_deadline_ == std::chrono::steady_clock::time_point{} ||
+             std::chrono::steady_clock::now() >= observation_deadline_)) {
+            command_cache_ = RobotCommand{};
+            command_array_ = command_array_t{};
+            have_fresh_command_ = false;
+            plan_period_ = std::chrono::microseconds{0};
+            return true;
+        }
         const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - command_start_time_);
         if (elapsed.count() < 0) return false;

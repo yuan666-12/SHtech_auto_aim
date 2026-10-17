@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <Eigen/Dense>
 #include <opencv2/opencv.hpp>
 
@@ -306,6 +307,7 @@ struct Plan
 
     /// @brief 目标距离 (米)，目标的直线距离
     double target_distance = 0.0;
+    bool prediction_rejected = false;
 };
 
 /**
@@ -366,6 +368,14 @@ struct Target
 
     /// @brief 整车模型可信标志
     bool vehicle_model_trust = false;
+    // Image time: motion estimation and loss between image observations.
+    std::chrono::high_resolution_clock::time_point last_observation_time{};
+    // Acceptance time: liveness at planner/serial; processing delay is not target loss.
+    std::chrono::steady_clock::time_point last_observation_update_time{};
+    bool observation_updated = false;
+    bool measurement_rejected = false;
+    bool filter_reset = false;
+    Eigen::Vector4d raw_measurement = Eigen::Vector4d::Zero();
     
     /// @brief 整车状态向量 [y, vy, x, vx, z, vz, yaw, vyaw, r] (9x1)
     /// @details y,x,z: 车辆中心位置；vy,vx,vz: 速度；yaw,vyaw: 装甲板偏航角和角速度；r: 旋转半径
@@ -436,7 +446,12 @@ struct ThreadDataPack
     RobotStatus robotstatus;    /*!< 上行机器人状态 */
     Attitude attitude;          /*!< 上行位姿数据 */
     RobotCommand robotcommand;
-    int index = 0;              /*!< 报文序号 */
+    int index = 0;
+    uint64_t camera_frame_number = 0, camera_device_timestamp = 0;
+    int64_t camera_host_timestamp = 0;
+    bool attitude_valid = false;
+    double attitude_age_ms = INFINITY;
+    double attitude_alignment_error_ms = INFINITY;              /*!< 报文序号 */
 
 };
 

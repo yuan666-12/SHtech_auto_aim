@@ -62,6 +62,13 @@ namespace predict
     const Target& Tracker::reset_target(const Eigen::Matrix<double, 4, 1> &measurement, TP &tp)
     {
         last_tp = tp;
+        target.last_observation_time = tp;
+        target.last_observation_update_time = std::chrono::steady_clock::now();
+        target.observation_updated = true;
+        target.measurement_rejected = false;
+        target.filter_reset = true;
+        target.raw_measurement = measurement;
+        observation_gate.reset(measurement, tp);
         dt = 0.0;
         detecting_counter = 0;
         temp_lost_counter = 0;
@@ -107,12 +114,35 @@ namespace predict
      * @return 更新后的目标状态引用
      * @details 执行完整的跟踪流程：预测、更新、模型选择、异常检测
      */
-    const Target& Tracker::track(const Eigen::Matrix<double, 4, 1> &measurement, const Eigen::Matrix<double, 4, 1> &secondary_measurement, const int same_id_armor_count,
+    const Target& Tracker::track(const Eigen::Matrix<double, 4, 1> &measurement, const Eigen::Matrix<double, 4, 1> &secondary_measurement, int same_id_armor_count,
                                     const int tag_id, const TP &tp, const double attitude_yaw)
     {
         // 注意：以下逻辑都是针对单个车辆的跟踪
 
         // 计算时间间隔
+        const bool previous_rejection = target.measurement_rejected;
+        target.observation_updated = false;
+        target.measurement_rejected = false;
+        target.filter_reset = false;
+        if (same_id_armor_count > 0) {
+            target.raw_measurement = measurement;
+            const double age = tracking_policy::observation_age(target.last_observation_time, tp);
+            if (age > tracking_policy::observation_timeout_s && !previous_rejection) {
+                TP reset_time = tp;
+                return reset_target(measurement, reset_time);
+            }
+            if (!observation_gate.consider(measurement, tp)) {
+                same_id_armor_count = 0;
+                target.measurement_rejected = true;
+            } else if (target.predictor_state == TrackingState::TEMP_LOST && !previous_rejection) {
+                TP reset_time = tp;
+                return reset_target(measurement, reset_time);
+            } else {
+                target.last_observation_time = tp;
+                target.last_observation_update_time = std::chrono::steady_clock::now();
+                target.observation_updated = true;
+            }
+        }
         dt = duration_cast<microseconds>(tp - last_tp).count() / 1e6;
         if (!std::isfinite(dt) || dt <= 0.0 || dt > 1.0) {
             if (same_id_armor_count == 0) {
@@ -128,6 +158,10 @@ namespace predict
         Eigen::Matrix<double, 3, 1> measured_pw(target.tracked_measurement(1, 0), target.tracked_measurement(0, 0), target.tracked_measurement(2, 0));
         Eigen::Matrix<double, 3, 1> tracked_pw(measurement(1, 0), measurement(0, 0), measurement(2, 0));
         double min_position_diff = (measured_pw - tracked_pw).norm();
+        // Translation alone is not an armor switch. Adjacent armors also change normal.
+        const double normal_change = std::abs(mathutils::limit_rad(
+            measurement(3) - target.tracked_measurement(3)));
+        if (same_id_armor_count > 0 && normal_change < M_PI_4) min_position_diff = 0.0;
         
         // 更新当前观测值
         if (same_id_armor_count) {
@@ -162,7 +196,7 @@ namespace predict
         }
 
         // 更新跟踪器状态机
-        update_tracker_state(same_id_armor_count);
+        update_tracker_state(same_id_armor_count, tp);
 
         // === 偏航角卡尔曼滤波更新 ===
         // 用于模型选择
@@ -323,7 +357,15 @@ namespace predict
             !target.armor_z_state.allFinite()) {
             LOGW_S("[Tracker] non-finite filter output; resetting from measurement");
             TP reset_time = tp;
-            return reset_target(target.tracked_measurement, reset_time);
+            const auto image_seen = target.last_observation_time;
+            const auto update_seen = target.last_observation_update_time;
+            reset_target(target.tracked_measurement, reset_time);
+            if (same_id_armor_count == 0) {
+                target.last_observation_time = image_seen;
+                target.last_observation_update_time = update_seen;
+                target.observation_updated = false;
+            }
+            return target;
         }
 
         // 更新时间戳
@@ -941,47 +983,32 @@ namespace predict
      * @param same_id_armor_count 检测到的同ID装甲板数量
      * @details 管理IDLE、DETECTING、TRACKING、TEMP_LOST四个状态之间的转换
      */
-    void Tracker::update_tracker_state(const double same_id_armor_count)
+    void Tracker::update_tracker_state(const double same_id_armor_count, const TP &tp)
     {
-        // 更新跟踪器状态
+        const double age = tracking_policy::observation_age(target.last_observation_time, tp);
+        if (age < 0.0 || age >= tracking_policy::observation_timeout_s) {
+            target.predictor_state = TrackingState::IDLE;
+            detecting_counter = temp_lost_counter = 0;
+            return;
+        }
         if (target.predictor_state == TrackingState::DETECTING) {
-            if (same_id_armor_count) {
-                detecting_counter++;
-                if (detecting_counter > detecting_counter_threshold) {
-                    // 连续检测足够次数，进入跟踪状态
+            if (same_id_armor_count > 0) {
+                if (++detecting_counter > detecting_counter_threshold) {
                     detecting_counter = 0;
                     target.predictor_state = TrackingState::TRACKING;
                 }
-            }
-            else {
-                // 检测失败，返回空闲状态
+            } else {
                 detecting_counter = 0;
                 target.predictor_state = TrackingState::IDLE;
             }
+        } else if (target.predictor_state == TrackingState::TRACKING &&
+                   same_id_armor_count == 0) {
+            target.predictor_state = TrackingState::TEMP_LOST;
+            temp_lost_tp = tp;
         }
-        else if (target.predictor_state == TrackingState::TRACKING) {
-            if (!same_id_armor_count) {
-                // 跟踪丢失，进入暂时丢失状态
-                temp_lost_counter++;
-                target.predictor_state = TrackingState::TEMP_LOST;
-                temp_lost_tp = std::chrono::high_resolution_clock::now();
-            }
-        }
-        else if (target.predictor_state == TrackingState::TEMP_LOST) {
-            if (!same_id_armor_count) {
-                temp_lost_counter++;
-                if (temp_lost_counter > temp_lost_counter_threshold) {
-                    // 丢失时间过长，返回空闲状态
-                    temp_lost_counter = 0;
-                    target.predictor_state = TrackingState::IDLE;
-                }
-            }
-            else {
-                // 重新找到目标，回到跟踪状态
-                temp_lost_counter = 0;
-                target.predictor_state = TrackingState::TRACKING;
-            }
-        }
+        if (target.predictor_state == TrackingState::TEMP_LOST && same_id_armor_count > 0)
+            target.predictor_state = TrackingState::TRACKING;
+        // Actual visual reacquisition resets before update; confirmed candidate jumps do not.
     }
 
     /**

@@ -4,6 +4,7 @@
 
 #include "xuc_driver.hpp"
 #include "xuc_conventions.hpp"
+#include "hero_diagnostics.hpp"
 
 #include <cerrno>
 #include <cmath>
@@ -58,43 +59,6 @@ std::string hex_dump(const uint8_t* data, size_t len)
         out.append(byte);
     }
     return out;
-}
-
-void append_xuc_debug_file(const std::string& line)
-{
-    static std::mutex mutex;
-    static std::ofstream file;
-    static bool initialized = false;
-    std::lock_guard<std::mutex> lock(mutex);
-
-    if (!initialized) {
-        initialized = true;
-        const auto start = std::chrono::system_clock::now();
-        const std::time_t start_time = std::chrono::system_clock::to_time_t(start);
-        std::tm start_local{};
-        localtime_r(&start_time, &start_local);
-        std::ostringstream filename;
-        filename << PROJECT_DIR << "/log/xuc/xuc_"
-                 << std::put_time(&start_local, "%Y-%m-%d-%H-%M-%S") << ".log";
-        const char* custom_log = std::getenv("AUTOAIM_XUC_LOG_FILE");
-        const std::string log_path = custom_log && *custom_log ? custom_log : filename.str();
-        std::error_code error;
-        const auto parent = std::filesystem::path(log_path).parent_path();
-        if (!parent.empty()) std::filesystem::create_directories(parent, error);
-        file.open(log_path, std::ios::app);
-    }
-    if (!file) return;
-
-    const auto now = std::chrono::system_clock::now();
-    const std::time_t now_time = std::chrono::system_clock::to_time_t(now);
-    std::tm local_time{};
-    localtime_r(&now_time, &local_time);
-    const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
-        now.time_since_epoch()).count() % 1000;
-    file << std::put_time(&local_time, "%Y-%m-%d %H:%M:%S")
-         << '.' << std::setfill('0') << std::setw(3) << milliseconds << std::setfill(' ')
-         << " " << line << '\n';
-    file.flush();
 }
 
 bool track_only()
@@ -262,10 +226,6 @@ void XucDriver::transmit_cmd(float yaw, float yaw_spd, float pitch, float pitch_
     constexpr float HERO_PITCH_MAX_DEG = 43.0f;
     const float constrained_pitch = std::clamp(
         pitch, HERO_PITCH_MIN_DEG, HERO_PITCH_MAX_DEG);
-    if (constrained_pitch != pitch) {
-        LOGW_S("[HeroXuc] pitch target clamped: %.2f -> %.2f deg", pitch,
-               constrained_pitch);
-    }
 
     // The flashed STM32 firmware validates protocol-v2's explicit 31-byte
     // layout. Do not use a C++ struct here: host-side packing put v_y at 22,
@@ -283,30 +243,42 @@ void XucDriver::transmit_cmd(float yaw, float yaw_spd, float pitch, float pitch_
     put_float(13, 0.0f);
     put_float(17, (target_id != 0) ? dist : 0.0f);
     // Tracking trials may actuate yaw/pitch but must never advise firing.
-    pkt[21] = track_only() ? 0U : static_cast<uint8_t>(shoot & 0x01);
+    pkt[21] = (track_only() || constrained_pitch != pitch) ? 0U : static_cast<uint8_t>(shoot & 0x01);
     put_float(25, 0.0f);
     append_crc16(pkt.data(), pkt.size());
 
-    const std::string raw = hex_dump(pkt.data(), pkt.size());
-    std::ostringstream debug;
-    debug << "[TX" << (dry_run ? "/DRY_RUN" : "")
-          << (fire_mode_enabled ? "/ENABLED" : "/BLOCKED") << "] pitch="
-          << std::fixed << std::setprecision(3)
-          << constrained_pitch << " yaw=" << mcu_yaw
-          << " yaw_diff=" << mcu_yaw_spd << " pitch_diff=" << 0.0f
-          << " distance=" << ((target_id != 0) ? dist : 0.0f)
-          << " fire=" << static_cast<unsigned>(pkt[21])
-          << " yaw_internal=" << yaw << " v_y=0 raw=" << raw;
-    append_xuc_debug_file(debug.str());
-    if (xuc_debug()) LOGM_S("[HeroXuc]%s", debug.str().c_str());
-
-    if (dry_run || !fire_mode_enabled) return;
-
-    const ssize_t written = write_port(pkt.data(), pkt.size());
-    if (written == static_cast<ssize_t>(pkt.size())) {
-        tx_fps_.count();
-    } else {
-        LOGW_S("[HeroXuc] send incomplete: %zd/%zu", written, pkt.size());
+    ssize_t written = 0;
+    if (!dry_run && fire_mode_enabled) {
+        written = write_port(pkt.data(), pkt.size());
+        if (written == static_cast<ssize_t>(pkt.size())) tx_fps_.count();
+        else {
+            const auto report = hero_log::permit(hero_log::Stream::Pnp, 100);
+            if (report.emit) {
+                LOGW_S("[HeroXuc] send incomplete: %zd/%zu", written, pkt.size());
+                hero_log::append("[TX_ERROR] UART write incomplete",true);
+            }
+        }
+    }
+    const bool limited = constrained_pitch != pitch;
+    const uint64_t key = uint64_t(target_id) | (uint64_t(pkt[21]) << 8) |
+        (uint64_t(fire_mode_enabled) << 16) | (uint64_t(limited) << 17);
+    const auto report = hero_log::permit(hero_log::Stream::Tx,key);
+    if (report.emit) {
+        std::ostringstream debug;
+        debug << "[TX" << (dry_run ? "/DRY_RUN" : "")
+              << (fire_mode_enabled ? "/ENABLED" : "/BLOCKED") << "] pitch="
+              << std::fixed << std::setprecision(3)
+              << constrained_pitch << " yaw=" << mcu_yaw
+              << " distance=" << ((target_id != 0) ? dist : 0.0f)
+              << " target_id=" << unsigned(target_id) << " fire=" << unsigned(pkt[21])
+              << " pitch_requested=" << pitch << " pitch_limited=" << limited
+              << " written=" << written << " seq=" << report.sequence
+              << " skipped=" << report.skipped << " event=" << report.event;
+        if (hero_log::raw_enabled()) debug << " raw=" << hex_dump(pkt.data(),pkt.size());
+        hero_log::append(debug.str(),report.event);
+        static thread_local hero_log::RateGate console_gate;
+        const auto display = console_gate.sample(hero_log::Clock::now(),key,std::chrono::milliseconds(1000));
+        if (xuc_debug() && display.emit) LOGM_S("[HeroXuc]%s",debug.str().c_str());
     }
 }
 
@@ -396,20 +368,6 @@ bool XucDriver::process_status_packet(const uint8_t* data)
 
     rx_fps_.count();
 
-    const std::string raw = hex_dump(data, sizeof(HeroXucStatusPacket));
-    std::ostringstream debug;
-    debug << "[RX] color="
-          << ((pkt.flags & HeroXucFlags::DetectColor) ? 1U : 0U)
-          << " reset_tracker="
-          << ((pkt.flags & HeroXucFlags::ResetTracker) ? 1U : 0U)
-          << " fire_mode=" << (fire_mode ? 1U : 0U)
-          << " roll=" << std::fixed << std::setprecision(3) << pkt.roll
-          << " pitch=" << pkt.pitch << " yaw=" << pkt.yaw
-          << " yaw_internal=" << xuc_conventions::internal_yaw_from_mcu(pkt.yaw)
-          << " aim=(" << pkt.aim_x << "," << pkt.aim_y << "," << pkt.aim_z
-          << ") raw=" << raw;
-    append_xuc_debug_file(debug.str());
-    if (xuc_debug()) LOGM_S("[HeroXuc]%s", debug.str().c_str());
 
     if (attitude_cb_) {
         attitude_cb_(Attitude(xuc_conventions::internal_yaw_from_mcu(pkt.yaw),
@@ -425,5 +383,20 @@ bool XucDriver::process_status_packet(const uint8_t* data)
         status_cb_(sts);
     }
 
+    const auto report = hero_log::permit(hero_log::Stream::Rx,pkt.flags);
+    if (report.emit) {
+        std::ostringstream debug;
+        debug << "[RX] color=" << ((pkt.flags & HeroXucFlags::DetectColor) ? 1U : 0U)
+              << " reset_tracker=" << mcu_tracking << " fire_mode=" << fire_mode
+              << std::fixed << std::setprecision(3)
+              << " roll=" << pkt.roll << " pitch=" << pkt.pitch << " yaw=" << pkt.yaw
+              << " seq=" << report.sequence << " skipped=" << report.skipped
+              << " event=" << report.event;
+        if (hero_log::raw_enabled()) debug << " raw=" << hex_dump(data,sizeof(pkt));
+        hero_log::append(debug.str(),report.event);
+        static thread_local hero_log::RateGate console_gate;
+        const auto display = console_gate.sample(hero_log::Clock::now(),pkt.flags,std::chrono::milliseconds(1000));
+        if (xuc_debug() && display.emit) LOGM_S("[HeroXuc]%s",debug.str().c_str());
+    }
     return true;
 }

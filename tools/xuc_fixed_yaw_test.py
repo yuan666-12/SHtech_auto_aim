@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""One-shot MCU-native fixed-yaw test. No camera and no auto-aim process.
+"""One-shot MCU-native fixed-angle test. No camera and no auto-aim process.
 Default: absolute yaw 0 deg, hold starting pitch, fire=0, 200 Hz for 5 s.
+--yaw alone holds starting pitch; --pitch alone holds starting yaw.
+Supply both to control both absolute angles. Pitch range: [0,43] degrees.
 Only sends after fresh CRC-valid RX reports fire_mode=1. No return motion.
 """
 import argparse
@@ -36,13 +38,16 @@ def control_packet(yaw, pitch):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--device', default=DEVICE)
-    parser.add_argument('--yaw', type=float, default=0.0, help='absolute MCU-native yaw, degrees')
+    parser.add_argument('--yaw', type=float, help='absolute MCU-native yaw in degrees; default 0, or hold starting yaw with --pitch')
+    parser.add_argument('--pitch', type=float, help='absolute MCU-native pitch in [0,43] degrees; omitted: hold starting pitch')
     parser.add_argument('--duration', type=float, default=5.0)
     parser.add_argument('--wait', type=float, default=120.0)
     parser.add_argument('--log', type=Path)
     args = parser.parse_args()
-    if not math.isfinite(args.yaw) or not -180 <= args.yaw <= 180:
+    if args.yaw is not None and (not math.isfinite(args.yaw) or not -180 <= args.yaw <= 180):
         parser.error('yaw must be finite and within [-180,180]')
+    if args.pitch is not None and (not math.isfinite(args.pitch) or not 0 <= args.pitch <= 43):
+        parser.error('pitch must be finite and within [0,43]')
     if not 0 < args.duration <= 30 or not 0 < args.wait <= 300:
         parser.error('duration must be (0,30] seconds; wait must be (0,300] seconds')
     project = Path(__file__).resolve().parent.parent
@@ -101,7 +106,9 @@ def main():
             cfg[6][termios.VMIN] = cfg[6][termios.VTIME] = 0
             termios.tcsetattr(fd, termios.TCSANOW, cfg)
             termios.tcflush(fd, termios.TCIFLUSH)
-            record('ARMED wait=%.1fs absolute_yaw=%.3f fire=0; no detection; waiting for fresh fire_mode=1' % (args.wait, args.yaw), True)
+            yaw_request = 'hold-starting' if args.yaw is None and args.pitch is not None else '%.3f' % (0.0 if args.yaw is None else args.yaw)
+            pitch_request = 'hold-starting' if args.pitch is None else '%.3f' % args.pitch
+            record('ARMED wait=%.1fs absolute_yaw=%s absolute_pitch=%s fire=0; no detection; waiting for fresh fire_mode=1' % (args.wait, yaw_request, pitch_request), True)
             deadline = time.monotonic() + args.wait
             while not stopped and time.monotonic() < deadline:
                 receive()
@@ -110,11 +117,12 @@ def main():
                 time.sleep(0.005)
             else:
                 raise RuntimeError('cancelled or self-aim mode wait expired')
-            pitch = latest[2]
+            yaw = args.yaw if args.yaw is not None else (latest[3] if args.pitch is not None else 0.0)
+            pitch = latest[2] if args.pitch is None else args.pitch
             if not 0 <= pitch <= 43:
                 raise RuntimeError('starting pitch outside [0,43], refusing control')
-            packet = control_packet(args.yaw, pitch)
-            record('START rx_yaw=%.3f target_yaw=%.3f fixed_pitch=%.3f duration=%.1fs' % (latest[3], args.yaw, pitch, args.duration), True)
+            packet = control_packet(yaw, pitch)
+            record('START rx_yaw=%.3f target_yaw=%.3f fixed_pitch=%.3f duration=%.1fs' % (latest[3], yaw, pitch, args.duration), True)
             start = next_tick = time.monotonic()
             next_report = start
             while not stopped and time.monotonic() - start < args.duration:
@@ -128,9 +136,9 @@ def main():
                 if written != 31:
                     raise RuntimeError('short write %d/31; stopped sending' % written)
                 tx_count += 1
-                record('TX t=%.6f yaw=%.6f pitch=%.6f yaw_diff=0 pitch_diff=0 distance=0.4 fire=0 written=31 raw=%s' % (now - start, args.yaw, pitch, packet.hex(' ')))
+                record('TX t=%.6f yaw=%.6f pitch=%.6f yaw_diff=0 pitch_diff=0 distance=0.4 fire=0 written=31 raw=%s' % (now - start, yaw, pitch, packet.hex(' ')))
                 if now >= next_report:
-                    record('STATUS t=%.3f target_yaw=%.3f actual_yaw=%.3f fixed_pitch=%.3f actual_pitch=%.3f TX=%d' % (now - start, args.yaw, latest[3], pitch, latest[2], tx_count), True)
+                    record('STATUS t=%.3f target_yaw=%.3f actual_yaw=%.3f fixed_pitch=%.3f actual_pitch=%.3f TX=%d' % (now - start, yaw, latest[3], pitch, latest[2], tx_count), True)
                     next_report = now + 0.5
                 next_tick += 0.005
                 time.sleep(max(0, next_tick - time.monotonic()))

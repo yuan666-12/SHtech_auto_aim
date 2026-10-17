@@ -171,6 +171,7 @@ struct PlannerToSerialMessage {
     std::array<RobotCommand, 10> command_array;
     Attitude attitude;
     std::chrono::microseconds plan_period;
+    std::chrono::steady_clock::time_point observation_deadline{};
 };
 
 /**
@@ -189,7 +190,9 @@ struct EntryStageToFoxgloveAliveMessage {
 
 struct SensorFromSerialAttitudeMessage {
     Attitude attitude;
-    std::chrono::steady_clock::time_point received_at{}; // Actual driver callback time.
+    std::chrono::steady_clock::time_point received_at{}; // Actual source callback time.
+    bool aligned = false;
+    double alignment_error_ms = INFINITY;
 };
 
 struct SensorFromSerialRobotStatusMessage {
@@ -211,7 +214,15 @@ using EntryStageToFoxgloveRobotBridge = PushBridge<EntryStageToFoxgloveRobotMess
  */
 using EntryStageToFoxgloveAliveBridge = PushBridge<EntryStageToFoxgloveAliveMessage>;
 
-using SensorFromSerialAttitudeBridge = PullBridge<SensorFromSerialAttitudeMessage>;
+class SensorFromSerialAttitudeBridge : public PullBridge<SensorFromSerialAttitudeMessage> {
+    using TimeProvider = std::function<SensorFromSerialAttitudeMessage(std::chrono::steady_clock::time_point)>;
+    TimeProvider time_provider_;
+public:
+    void set_time_provider(TimeProvider provider) { time_provider_ = std::move(provider); }
+    SensorFromSerialAttitudeMessage get_at(std::chrono::steady_clock::time_point stamp) const {
+        return time_provider_ ? time_provider_(stamp) : get();
+    }
+};
 
 using SensorFromSerialRobotStatusBridge = PullBridge<SensorFromSerialRobotStatusMessage>;
 

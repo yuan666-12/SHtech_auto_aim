@@ -103,6 +103,12 @@ namespace predict
      */
     void MultiPolicyPredictorSubModule::predict(std::shared_ptr<ThreadDataPack> data)
     {
+        if (!data->attitude_valid) {
+            data->target = Target{};
+            data->has_fixed_target = false;
+            fixed_target_id = 0;
+            return;
+        }
         cx = data->frame.cols * 0.5;
         cy = data->frame.rows * 0.5;
         maxSD = std::max(1.0, std::hypot(cx, cy));

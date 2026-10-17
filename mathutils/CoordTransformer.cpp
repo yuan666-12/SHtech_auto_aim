@@ -8,6 +8,7 @@
 #include "CoordTransformer.hpp"
 #include "armor_policy.hpp"
 #include <stdexcept>
+#include "hero_diagnostics.hpp"
 
 namespace mathutils
 {
@@ -192,6 +193,11 @@ namespace mathutils
         // std::cout << "C_MAT: " << std::endl << C_MAT << std::endl;
 
         // 将图像点转换为PnP算法需要的格式
+        std::vector<cv::Point2f> polygon(p, p + 4);
+        for (const auto &point : polygon)
+            if (!std::isfinite(point.x) || !std::isfinite(point.y)) return false;
+        if (!cv::isContourConvex(polygon) || std::abs(cv::contourArea(polygon)) < 16.0)
+            return false;
         std::vector<cv::Point2d> pu(p, p + 4);
         // cv::Mat pu(4, 1, CV_32FC2, const_cast<cv::Point2f*>(p));
 
@@ -202,6 +208,24 @@ namespace mathutils
         if (!success || !cv::checkRange(rvec) || !cv::checkRange(tvec)) {
             return false;
         }
+        std::vector<cv::Point2d> reprojected;
+        cv::projectPoints(pw_cur,rvec,tvec,F_MAT,C_MAT,reprojected);
+        double squared_error = 0.0;
+        for (size_t i=0;i<pu.size();++i) {
+            const auto delta = pu[i]-reprojected[i];
+            squared_error += delta.dot(delta);
+        }
+        const double rms = std::sqrt(squared_error / pu.size());
+        if (!std::isfinite(rms) || rms > 5.0) {
+            const auto report = hero_log::permit(hero_log::Stream::Pnp,2);
+            if (report.emit) {
+                std::ostringstream text; text << "[PNP_REJECT] reprojection_rms_px=" << rms
+                    << " limit_px=5 seq=" << report.sequence << " skipped=" << report.skipped;
+                hero_log::append(text.str(),report.event);
+            }
+            return false;
+        }
+
         
         // === 坐标变换过程 ===
         // 获取装甲板中心在不同坐标系中的位置

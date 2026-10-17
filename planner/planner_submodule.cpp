@@ -4,6 +4,8 @@
 //
 
 #include "planner_submodule.hpp"
+#include "tracking_policy.hpp"
+#include "hero_diagnostics.hpp"
 
 namespace plan
 {
@@ -70,7 +72,55 @@ namespace plan
             data->attitude,
             plan_period
         };
+        const double observation_age = tracking_policy::observation_age(
+            target.last_observation_time,std::chrono::high_resolution_clock::now());
+        const auto updated_at = target.last_observation_update_time;
+        const double update_age = updated_at == std::chrono::steady_clock::time_point{} ? INFINITY :
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - updated_at).count();
+        if (send.target_id != 0 && update_age >= 0.0 && update_age < tracking_policy::observation_timeout_s)
+            msg.observation_deadline = updated_at +
+                std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                    std::chrono::duration<double>(tracking_policy::observation_timeout_s));
         planner_bridge.send(msg);
+        const uint64_t key = uint64_t(send.target_id) |
+            (uint64_t(target.predictor_state) << 8) |
+            (uint64_t(target.updating_model_type) << 12) |
+            (uint64_t(target.measurement_rejected) << 16) |
+            (uint64_t(plan.prediction_rejected) << 17) |
+            (uint64_t(data->attitude_valid) << 18) |
+            (uint64_t(target.filter_reset) << 19);
+        const auto report = hero_log::permit(hero_log::Stream::Vision,key);
+        if (report.emit) {
+            std::ostringstream text;
+            text << "[VISION] frame=" << data->index
+                 << " camera_frame=" << data->camera_frame_number
+                 << " camera_host_stamp=" << data->camera_host_timestamp
+                 << " camera_device_stamp=" << data->camera_device_timestamp
+                 << " target_id=" << send.target_id
+                 << " state=" << TrackingState2String(target.predictor_state)
+                 << " model=" << UpdatingModelType2String(target.updating_model_type)
+                 << " aim_mode=" << AimedTargetType2String(plan.aimed_target_type)
+                 << " vehicle_trust=" << target.vehicle_model_trust
+                 << " attitude_valid=" << data->attitude_valid
+                 << " observed=" << target.observation_updated
+                 << " obs_age_ms=" << observation_age * 1000.0
+                 << " obs_update_age_ms=" << update_age * 1000.0
+                 << " observation_rejected=" << target.measurement_rejected
+                 << " filter_reset=" << target.filter_reset
+                 << " prediction_rejected=" << plan.prediction_rejected
+                 << " raw_yxzyaw=(" << target.raw_measurement.transpose() << ")"
+                 << " accepted_yxzyaw=(" << target.tracked_measurement.transpose() << ")"
+                 << " filtered_xyz=(" << target.armor_x_state(0) << ' ' << target.armor_y_state(0) << ' ' << target.armor_z_state(0) << ")"
+                 << " velocity_xyz=(" << target.armor_x_state(1) << ' ' << target.armor_y_state(1) << ' ' << target.armor_z_state(1) << ")"
+                 << " aim_xyz=(" << plan.aimed_armor_pos.transpose() << ")"
+                 << " plan_yaw=" << plan.target_yaw * 180.0 / M_PI
+                 << " plan_pitch=" << plan.target_pitch * 180.0 / M_PI
+                 << " attitude_age_ms=" << data->attitude_age_ms
+                 << " alignment_error_ms=" << data->attitude_alignment_error_ms
+                 << " seq=" << report.sequence << " skipped=" << report.skipped
+                 << " event=" << report.event;
+            hero_log::append(text.str(),report.event);
+        }
         return SubModuleResult::SUCCESS;
     }
 

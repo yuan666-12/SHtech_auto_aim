@@ -1,3 +1,4 @@
+#include <cstdlib>
 //
 // Created for pipeline refactor - SensorSubModule
 // Wraps original Sensor logic as SubModule (Camera only, hardware communication moved to hardware::TimedSerial)
@@ -111,16 +112,37 @@ namespace sensor
 
         // 读取图像
         bool state = video->read(data->frame, config_.debug.log_text);
-        data->time = std::chrono::high_resolution_clock::now();
+        const auto read_completed = std::chrono::steady_clock::now();
+        auto frame_received = video->frame_received_at();
+        if (frame_received == std::chrono::steady_clock::time_point{} ||
+            frame_received > read_completed ||
+            read_completed - frame_received > std::chrono::seconds(1))
+            frame_received = read_completed;
+        static const double image_delay_ms = [] {
+            const char* value = std::getenv("AUTOAIM_IMAGE_DELAY_MS");
+            if (!value || !*value) return 0.0;
+            char* end = nullptr; const double delay = std::strtod(value,&end);
+            return end && !*end && std::isfinite(delay) && delay >= 0.0 && delay <= 200.0 ? delay : 0.0;
+        }();
+        const auto frame_time = frame_received - std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+            std::chrono::duration<double,std::milli>(image_delay_ms));
+        data->time = std::chrono::high_resolution_clock::now() -
+            std::chrono::duration_cast<std::chrono::high_resolution_clock::duration>(
+                std::chrono::steady_clock::now()-frame_time);
+        data->camera_frame_number = video->frame_number();
+        data->camera_host_timestamp = video->host_timestamp();
+        data->camera_device_timestamp = video->device_timestamp();
         const auto image_read_unix_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
-
-        // 读取imu
-        const auto attitude_message = attitude_bridge.get();
+        const auto attitude_message = attitude_bridge.get_at(frame_time);
         const auto attitude_sampled_at = std::chrono::steady_clock::now();
         data->attitude = attitude_message.attitude;
         const bool attitude_fresh = calibration::fresh(
             attitude_message.received_at, attitude_sampled_at);
+        data->attitude_age_ms = attitude_message.received_at == std::chrono::steady_clock::time_point{} ? INFINITY :
+            std::chrono::duration<double,std::milli>(attitude_sampled_at-attitude_message.received_at).count();
+        data->attitude_alignment_error_ms = attitude_message.alignment_error_ms;
+        data->attitude_valid = attitude_fresh && attitude_message.aligned;
         data->robotstatus = status_bridge.get().robotstatus;
 
         if (!state)

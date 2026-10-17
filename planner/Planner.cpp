@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <sstream>
+#include "tracking_policy.hpp"
 
 // === 评测标准开关 ===
 #define ASSESSMENT_CRITERIA 0
@@ -129,6 +130,21 @@ namespace predict
         const double attitude_yaw, const double attitude_pitch, const Eigen::Matrix3d &R_world2imu, const TP &tp)
     {
         try {
+        const auto updated_at = target.last_observation_update_time;
+        const double observation_age = updated_at == std::chrono::steady_clock::time_point{} ? INFINITY :
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - updated_at).count();
+        if (observation_age < 0.0 || observation_age >= tracking_policy::observation_timeout_s) {
+            planner_reset();
+            return plan;
+        }
+        if (target.predictor_state == TrackingState::TEMP_LOST) {
+            // Hold the last observed target angle briefly; never chase an extrapolated ghost.
+            plan.target_yaw_speed = plan.target_pitch_speed = 0.0;
+            plan.target_yaw_acc = plan.target_pitch_acc = 0.0;
+            plan.fire_enable = 0;
+            return plan;
+        }
+        plan.prediction_rejected = false;
         if (!target.tracked_measurement.allFinite() || !target.yaw_state.allFinite() ||
             !target.armor_x_state.allFinite() || !target.armor_y_state.allFinite() ||
             !target.armor_z_state.allFinite() || !target.tracked_state.allFinite()) {
@@ -164,7 +180,7 @@ namespace predict
             plan.target_pitch = res(1, 0);
 
             // 计算目标角速度
-            res = cal_target_speed(target.armor_x_state, target.armor_y_state, target.armor_z_state);
+            res = Eigen::Vector2d::Zero();
 
             plan.target_yaw_speed = res(0, 0);
             plan.target_pitch_speed = res(1, 0);
@@ -515,6 +531,29 @@ namespace predict
 
         }
 
+        if (plan.aimed_target_type != AimedTargetType::NONE) {
+            const Pos3D observed(target.tracked_measurement(1),
+                                 target.tracked_measurement(0),
+                                 target.tracked_measurement(2));
+            const double observed_range = observed.norm();
+            const double predicted_range = plan.aimed_armor_pos.norm();
+            if (observed_range > 1e-6 &&
+                (predicted_range < 0.5 * observed_range ||
+                 predicted_range > 2.0 * observed_range)) {
+                // Reject gross range changes introduced by prediction, not by observation.
+                plan.aimed_armor_pos = observed;
+                const auto angles = cal_gimbal_target(observed, bullet_speed,
+                    attitude_yaw, attitude_pitch, R_world2imu);
+                plan.target_yaw = angles(0); plan.target_pitch = angles(1);
+                plan.target_yaw_speed = plan.target_pitch_speed = 0.0;
+                plan.target_yaw_acc = plan.target_pitch_acc = 0.0;
+                plan.target_distance = observed_range;
+                plan.aimed_target_type = AimedTargetType::ARMOR_WITH_NO_MODEL;
+                plan.fire_enable = 0;
+                plan.prediction_rejected = true;
+            }
+            if (target.predictor_state == TrackingState::DETECTING) plan.fire_enable = 0;
+        }
         if (plan.aimed_target_type != AimedTargetType::NONE &&
             (!plan.aimed_armor_pos.allFinite() || !std::isfinite(plan.target_distance) ||
              !std::isfinite(plan.target_yaw) || !std::isfinite(plan.target_pitch) ||

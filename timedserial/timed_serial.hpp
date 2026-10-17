@@ -11,6 +11,7 @@
 
 // modules
 #include "common.hpp"
+#include "attitude_history.hpp"
 
 // packages
 #include <stdint.h>
@@ -114,6 +115,7 @@ namespace hardware
         Attitude attitude_cache_{};
         std::chrono::microseconds plan_period_{0};
         std::chrono::steady_clock::time_point command_start_time_{};
+        std::chrono::steady_clock::time_point observation_deadline_{};
         // Keep the latest valid command on the wire between visual frames.
         // The STM32 intentionally drops tracking after 100 ms without a
         // valid packet, while detector/planner frames can take longer.
@@ -130,6 +132,7 @@ namespace hardware
         
         // 来自驱动层的实时数据（受 sensor_mutex_ 保护）
         std::chrono::steady_clock::time_point latest_attitude_received_at_{};
+        AttitudeHistory attitude_history_;
         Attitude latest_attitude_;           /*!< 最新姿态数据 */
         RobotStatus latest_robot_status_;    /*!< 最新机器人状态 */
         

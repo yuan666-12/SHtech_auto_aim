@@ -68,6 +68,8 @@ int main(int argc,char**argv){try{
  }
  predict::Planner planner(argv[2],false);
  Target target;target.predictor_state=TrackingState::DETECTING;
+ target.last_observation_time=std::chrono::high_resolution_clock::now();
+ target.last_observation_update_time=std::chrono::steady_clock::now();
  target.armor_x_measurement<<2;target.armor_y_measurement<<3;target.armor_z_measurement<<1;
  target.armor_x_state<<2,0;target.armor_y_state<<3,0;target.armor_z_state<<1,0;
  for(auto att:{Attitude(0,0,0),Attitude(20,15,0)}){

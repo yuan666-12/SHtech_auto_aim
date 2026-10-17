@@ -313,6 +313,11 @@ bool HikCamWrapper::read(cv::Mat &src, bool debug)
         return false;
     }
 
+    frame_received_at_ = std::chrono::steady_clock::now();
+    frame_number_ = stOutFrame.stFrameInfo.nFrameNum;
+    host_timestamp_ = stOutFrame.stFrameInfo.nHostTimeStamp;
+    device_timestamp_ = (uint64_t(stOutFrame.stFrameInfo.nDevTimeStampHigh) << 32) |
+        stOutFrame.stFrameInfo.nDevTimeStampLow;
     //nRet = MV_CC_ConvertPixelType(cam_handle, &stConvertParam);
     //src = cv::Mat(stImageInfo.nHeight, stImageInfo.nWidth, CV_8UC3, pDataForBGR);
     cv::Mat _src;

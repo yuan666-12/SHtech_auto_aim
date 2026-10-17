@@ -29,8 +29,15 @@ public:
     bool close(bool debug = false);
 
     cv::Size getSize();
+    std::chrono::steady_clock::time_point frame_received_at() const override { return frame_received_at_; }
+    uint64_t frame_number() const override { return frame_number_; }
+    int64_t host_timestamp() const override { return host_timestamp_; }
+    uint64_t device_timestamp() const override { return device_timestamp_; }
 
 private:
+    std::chrono::steady_clock::time_point frame_received_at_{};
+    uint64_t frame_number_ = 0, device_timestamp_ = 0;
+    int64_t host_timestamp_ = 0;
     double exposure;
     double gain;
     void *cam_handle;
