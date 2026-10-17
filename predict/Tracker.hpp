@@ -192,7 +192,7 @@ namespace predict
         TP last_tp;
         
         /// @brief 时间间隔 (秒)
-        double dt;
+        double dt = 0.0;
 
         /// @brief 目标跟踪状态结构体
         Target target;

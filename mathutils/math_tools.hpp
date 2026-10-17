@@ -23,6 +23,8 @@
 #include <string>
 #include <vector>
 #include <cmath>
+#include <limits>
+#include <stdexcept>
 #include <chrono>
 #include <thread>
 #include <chrono>
@@ -83,6 +85,48 @@ namespace mathutils
         return std::atan2(m_pw(1, 0), m_pw(0, 0));
     }
 
+    struct BallisticSolution {
+        double flight_time = -1.0;
+        double pitch = 0.0;
+    };
+
+    // Low trajectory, Z up. With the existing 42 mm horizontal drag model,
+    // D=expm1(k*d)/k and t=D/(v*cos(pitch)). Use that SAME t in
+    // h=v*sin(pitch)*t-g*t*t/2. There is no unconstrained Newton iteration.
+    static inline BallisticSolution solve_ballistic_trajectory(
+        const Pos3D &pw, double speed, bool consider_resistence)
+    {
+        if (!pw.allFinite() || !std::isfinite(speed) || speed <= 0.0)
+            return {};
+        const double d = std::hypot(pw.x(), pw.y());
+        if (d <= 1e-9) return {};
+        double D = d;
+        if (consider_resistence) {
+            constexpr double k = 0.5 * 1.225 * (2.0 * M_PI * .021 * .021) / 2.0 / .041;
+            D = std::expm1(k * d) / k;
+        }
+        if (!std::isfinite(D)) return {};
+        const double a = .5 * g * D * D / (speed * speed);
+        const double c = a + pw.z();
+        const double discriminant = D * D - 4.0 * a * c;
+        if (!std::isfinite(discriminant) || discriminant < 0.0) return {};
+        // Rationalized smaller root avoids cancellation on flat trajectories.
+        const double pitch = std::atan(2.0 * c / (D + std::sqrt(discriminant)));
+        const double t = D / (speed * std::cos(pitch));
+        if (!std::isfinite(t) || t <= 0.0) return {};
+        return {t, pitch};
+    }
+
+    // Point on the near-side radial surface; works in every XY quadrant.
+    static inline Pos3D near_radial_point(Pos3D center, double radius)
+    {
+        const double d = std::hypot(center.x(), center.y());
+        if (!center.allFinite() || !std::isfinite(radius) || d <= 1e-9)
+            throw std::runtime_error("invalid vehicle radial geometry");
+        center.head<2>() *= (d - radius) / d;
+        return center;
+    }
+
     /**
      * @brief 计算考虑重力影响的弹丸飞行时间
      * @param pw 目标在世界坐标系中的位置
@@ -94,65 +138,7 @@ namespace mathutils
      */
     static inline double cal_fly_time(const Pos3D &pw, double shoot_speed = 23., bool consider_resistence = false)
     {
-        if (consider_resistence) {
-            // only for 42mm
-            // 考虑空气阻力， 计算角度
-            double theta = -atan(pw(1, 0) / pw(2, 0));
-
-            double delta_z;
-
-            // 首先计算空气阻力系数 K
-            // drag_c_realistic = (rho_air * Cd * Area) / (2 * mass_kg)
-            double k1 = 0.5 * 1.225 * (2 * 3.14159f * 0.021 * 0.021) / 2 / 0.041; // 0.5 * 1.225 0.47 * 1.169
-
-            // 使用迭代法求解炮弹的发射角度
-            // 根据炮弹的初速度、发射角度、空气阻力系数，计算炮弹的飞行轨迹
-            for (int i = 0; i < 100; i++)
-            {
-                // 计算炮弹的飞行时间
-                double t = (pow(2.718281828, k1 * distance_2D(pw)) - 1) / (k1 * shoot_speed * cos(theta));
-
-                delta_z = pw(2, 0) - shoot_speed * sin(theta) * t / cos(theta) + 4.9 * t * t / cos(theta) / cos(theta);
-
-                // 不断更新theta，直到小于某一个阈值
-                if (fabs(delta_z) < 0.000001)
-                    break;
-
-                // 更新角度
-                theta -= delta_z / (-(shoot_speed * t) / pow(cos(theta), 2) + 9.8 * t * t / (shoot_speed * shoot_speed) * sin(theta) / pow(cos(theta), 3));
-            }
-
-            return abs(distance_2D(pw) / (shoot_speed * cos(theta)));
-        }
-        else {
-            auto d = distance_2D(pw);  // 水平距离
-            auto h = pw(2, 0);         // 高度差
-
-            // 二次方程系数：at² + bt + c = 0
-            auto a = g * d * d / (2 * shoot_speed * shoot_speed);
-            auto b = -d;
-            auto c = a + h;
-            auto delta = b * b - 4 * a * c;  // 判别式
-
-            if (delta < 0) {
-                return -1;  // 无实数解 - 目标不可达
-            }
-
-            // 计算两种可能的发射角
-            auto tan_pitch_1 = (-b + std::sqrt(delta)) / (2 * a);
-            auto tan_pitch_2 = (-b - std::sqrt(delta)) / (2 * a);
-            auto pitch_1 = std::atan(tan_pitch_1);
-            auto pitch_2 = std::atan(tan_pitch_2);
-            
-            // 计算两种弹道的飞行时间
-            auto t_1 = d / (shoot_speed * std::cos(pitch_1));
-            auto t_2 = d / (shoot_speed * std::cos(pitch_2));
-
-            // 返回较短的飞行时间（较平的弹道）
-            auto fly_time = (t_1 < t_2) ? t_1 : t_2;
-
-            return fly_time;    
-        }
+        return solve_ballistic_trajectory(pw, shoot_speed, consider_resistence).flight_time;
     }
 
     
@@ -225,9 +211,9 @@ namespace mathutils
 
     static inline double limit_rad(double angle)
     {
-        while (angle > CV_PI) angle -= 2 * CV_PI;
-        while (angle <= -CV_PI) angle += 2 * CV_PI;
-        return angle;
+        if (!std::isfinite(angle)) return std::numeric_limits<double>::quiet_NaN();
+        const double result = std::remainder(angle, 2.0 * CV_PI);
+        return result <= -CV_PI ? result + 2.0 * CV_PI : result;
     }
 }
 

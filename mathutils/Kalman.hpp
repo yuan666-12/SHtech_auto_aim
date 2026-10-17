@@ -95,6 +95,7 @@ namespace mathutils
         
         /// @brief 后验状态协方差矩阵 P⁺
         Matrix_xxd P_post;
+        Matrix_xxd P_initial;
 
         /// @brief 卡尔曼增益矩阵 K
         Matrix_xzd K;
@@ -127,7 +128,7 @@ namespace mathutils
                 const Func_xxd_x1d &update_Q_, const Func_zzd_z1d &update_R_,
                 const Matrix_xxd &P0, const Matrix_x1d &X0)
         : update_A(update_A_), update_H(update_H_), update_Q(update_Q_), update_R(update_R_), 
-            P_post(P0), X_post(X0)
+            P_pri(P0), P_post(P0), P_initial(P0), X_pri(X0), X_post(X0)
         {
         }
 
@@ -139,6 +140,19 @@ namespace mathutils
         void reset(const Matrix_x1d &X0)
         {
             X_post = X0;
+            X_pri = X0;
+            P_post = P_pri = P_initial;
+        }
+
+        Matrix_x1d predict()
+        {
+            A = update_A(X_post);
+            Q = update_Q(X_post);
+            X_pri = A * X_post;
+            P_pri = A * P_post * A.transpose() + Q;
+            X_post = X_pri;
+            P_post = P_pri;
+            return X_post;
         }
 
         /**
@@ -175,13 +189,22 @@ namespace mathutils
 
             // === 校正步骤 ===
             // 计算卡尔曼增益
-            K = P_pri * H.transpose() * (H * P_pri * H.transpose() + R).inverse(); 
+            const Matrix_zzd S = H * P_pri * H.transpose() + R;
+            Eigen::LDLT<Matrix_zzd> decomposition(S);
+            if (!S.allFinite() || decomposition.info() != Eigen::Success ||
+                !decomposition.isPositive()) {
+                reset(X_post);
+                return X_post;
+            }
+            K = decomposition.solve((P_pri * H.transpose()).transpose()).transpose();
 
             // 状态校正（融合观测信息）
             X_post = X_pri + K * (Z - H * X_pri);
 
             // 更新后验状态协方差
-            P_post = (Matrix_xxd::Identity() - K * H) * P_pri;
+            const Matrix_xxd correction = Matrix_xxd::Identity() - K * H;
+            P_post = correction * P_pri * correction.transpose() + K * R * K.transpose();
+            P_post = (0.5 * (P_post + P_post.transpose())).eval();
 
             return X_post;
         }

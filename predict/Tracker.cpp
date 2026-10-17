@@ -61,6 +61,10 @@ namespace predict
      */
     const Target& Tracker::reset_target(const Eigen::Matrix<double, 4, 1> &measurement, TP &tp)
     {
+        last_tp = tp;
+        dt = 0.0;
+        detecting_counter = 0;
+        temp_lost_counter = 0;
         // 保存新的观测值
         target.tracked_measurement = measurement;
 
@@ -110,6 +114,15 @@ namespace predict
 
         // 计算时间间隔
         dt = duration_cast<microseconds>(tp - last_tp).count() / 1e6;
+        if (!std::isfinite(dt) || dt <= 0.0 || dt > 1.0) {
+            if (same_id_armor_count == 0) {
+                last_tp = tp;
+                target.predictor_state = TrackingState::IDLE;
+                return target;
+            }
+            TP reset_time = tp;
+            return reset_target(measurement, reset_time);
+        }
 
         // 计算位置变化用于判断装甲板是否跳变
         Eigen::Matrix<double, 3, 1> measured_pw(target.tracked_measurement(1, 0), target.tracked_measurement(0, 0), target.tracked_measurement(2, 0));
@@ -159,7 +172,9 @@ namespace predict
 
         if (same_id_armor_count) {
             if (min_position_diff < same_position_threshold) {
-                target.yaw_measurement << target.tracked_measurement(3, 0);
+                // Unwrap the observed angle around the previous filtered yaw.
+                target.yaw_measurement << target.yaw_state(0, 0) + mathutils::limit_rad(
+                    target.tracked_measurement(3, 0) - target.yaw_state(0, 0));
                 target.yaw_state = yaw_kf.update(target.yaw_measurement); 
             }
             else {
@@ -215,6 +230,11 @@ namespace predict
             }
         }
         else {
+            // Advance armor states to the current frame during TEMP_LOST.
+            target.armor_x_state = armor_x_kf.predict();
+            target.armor_y_state = armor_y_kf.predict();
+            target.armor_z_state = armor_z_kf.predict();
+            target.yaw_state = yaw_kf.predict();
             if (debug)
                 std::cout << "[predict] no same id armor" << std::endl;
         }
@@ -296,6 +316,14 @@ namespace predict
         else {
             if (debug)
                 std::cout << "[predict] no same id armor" << std::endl;
+        }
+
+        if (!target.tracked_state.allFinite() || !target.yaw_state.allFinite() ||
+            !target.armor_x_state.allFinite() || !target.armor_y_state.allFinite() ||
+            !target.armor_z_state.allFinite()) {
+            LOGW_S("[Tracker] non-finite filter output; resetting from measurement");
+            TP reset_time = tp;
+            return reset_target(target.tracked_measurement, reset_time);
         }
 
         // 更新时间戳
@@ -389,12 +417,18 @@ namespace predict
             negative_score(j, 1) = abs(mathutils::limit_rad(measurement(3, 0) - standard_armors[j](3, 0)));
         }
 
+        if (!negative_score.allFinite()) return 0;
+
         // 数据标准化
         Eigen::Matrix<double, 4, 2> regular_score;
         for (int i = 0; i < regular_score.rows(); i++)
         {
-            regular_score(i, 0) = (negative_score.col(0).maxCoeff() - negative_score(i, 0)) / (negative_score.col(0).maxCoeff() - negative_score.col(0).minCoeff());
-            regular_score(i, 1) = (negative_score.col(1).maxCoeff() - negative_score(i, 1)) / (negative_score.col(1).maxCoeff() - negative_score.col(1).minCoeff());
+            for (int column = 0; column < 2; ++column) {
+                const double range = negative_score.col(column).maxCoeff() -
+                                     negative_score.col(column).minCoeff();
+                regular_score(i, column) = range > 1e-12 ?
+                    (negative_score.col(column).maxCoeff() - negative_score(i, column)) / range : 1.0;
+            }
         }
 
         // 计算样本值占指标的比重
@@ -418,7 +452,10 @@ namespace predict
         entropy /= log(score_weight.rows());
 
         // 计算权重
-        Eigen::Vector2d weight = (Eigen::Vector2d::Ones() - entropy) / (2 - entropy.sum());
+        const double information = 2.0 - entropy.sum();
+        Eigen::Vector2d weight = information > 1e-12 ?
+            ((Eigen::Vector2d::Ones() - entropy) / information).eval() :
+            Eigen::Vector2d::Constant(0.5);
 
         // 计算匹配得分矩阵
         Eigen::Matrix<double, 1, 4> score;
@@ -988,7 +1025,7 @@ namespace predict
     void Tracker::reset_yaw_kf()
     {
         target.yaw_measurement << target.tracked_measurement(3, 0);
-        target.yaw_state(0, 0) = target.tracked_measurement(3, 0);
+        target.yaw_state << target.tracked_measurement(3, 0), 0.0;
         yaw_kf.reset(target.yaw_state); 
     }
 
@@ -1068,7 +1105,7 @@ namespace predict
             target.tracked_state(9, 0) = 0.4 - target.tracked_state(8, 0);
         }
 
-        whole_state_ekf.reset(target.tracked_state);
+        whole_state_ekf.set_state(target.tracked_state);
     }
 
     /**

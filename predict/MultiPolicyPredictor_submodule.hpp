@@ -86,9 +86,9 @@ namespace predict
         const double max_distance_accept = 4.5; // 最大可接受距离 (米)
         const double max_height_accept = 1.5; // m
 
-        const int cx = 640; // 图像中心X坐标 (像素)
-        const int cy = 360; // 图像中心Y坐标 (像素)
-        const double maxSD = std::sqrt(std::pow(cx, 2) + std::pow(cy, 2)); // 最大像素距离 (像素)
+        double cx = 640; // Updated from actual image dimensions.
+        double cy = 360;
+        double maxSD = std::hypot(cx, cy);
 
         const float dist_weight = 0.6f; // 距离权重
 

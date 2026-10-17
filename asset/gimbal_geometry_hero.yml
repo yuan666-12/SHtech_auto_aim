@@ -1,0 +1,11 @@
+%YAML:1.0
+---
+# Separate mechanical geometry; camera K/D/R_c2i/T_c2i remain unchanged.
+# Origin O: yaw/pitch axis intersection. Vector O -> IMU, in IMU
+# left/up/forward axes, metres. Confirmed mechanical camera positions:
+# O->C=(.0895,.0999,.06068), I->C=(.15378,.03203,.00279).
+T_pivot2imu: !!opencv-matrix
+   rows: 3
+   cols: 1
+   dt: d
+   data: [ -0.06428, 0.06787, 0.05789 ]

@@ -122,6 +122,8 @@ struct RobotStatus
 
 struct RobotCommand
 {
+    // Internal bridge: relative angle in degrees, PC extrapolation rates in deg/s.
+    // XUC serializes FINAL absolute yaw/pitch; Hero does not use wire rate slots.
     float distance = 0.0f;
     float yaw_angle = 0.0f;
     float yaw_speed = 0.0f;
@@ -133,6 +135,13 @@ struct RobotCommand
     int target_id = 0; // 1-7: robot, 8: outpost, 9: base, 0: none
 };
 
+
+// PC-only extrapolation; all angles/rates are degrees, deg/s, deg/s^2.
+inline RobotCommand command_extrapolation(RobotCommand cmd, double seconds) {
+    cmd.yaw_angle += cmd.yaw_speed * seconds;
+    cmd.pitch_angle += cmd.pitch_speed * seconds;
+    return cmd;
+}
 
 // 射击指令线性插值，对target_id和shoot_mode采纳时间上更接近的指令
 inline RobotCommand command_linear_interpolation(const RobotCommand& cmd1, const RobotCommand& cmd2, float cmdTwoWeight){
@@ -347,61 +356,61 @@ enum class UpdatingModelType : uint8_t
 struct Target
 {
     /// @brief 当前跟踪器状态
-    TrackingState predictor_state;
+    TrackingState predictor_state = TrackingState::IDLE;
     
     /// @brief 当前模型更新类型
-    UpdatingModelType updating_model_type;
+    UpdatingModelType updating_model_type = UpdatingModelType::ARMOR_MODEL;
 
     /// @brief 装甲板切换计数器（0或1，标识当前跟踪的装甲板）
-    int ab_counter;
+    int ab_counter = 0;
 
     /// @brief 整车模型可信标志
-    bool vehicle_model_trust;
+    bool vehicle_model_trust = false;
     
     /// @brief 整车状态向量 [y, vy, x, vx, z, vz, yaw, vyaw, r] (9x1)
     /// @details y,x,z: 车辆中心位置；vy,vx,vz: 速度；yaw,vyaw: 装甲板偏航角和角速度；r: 旋转半径
     /// 坐标使用世界坐标系，装甲板偏航角坐标系为：正对世界坐标系y轴为0度，以世界坐标系z轴负半轴为正方向旋转
-    Eigen::Matrix<double, 11, 1> tracked_state;
+    Eigen::Matrix<double, 11, 1> tracked_state = Eigen::Matrix<double, 11, 1>::Zero();
     
     /// @brief 整车模型观测向量 [y, x, z, yaw] (4x1)
-    Eigen::Matrix<double, 4, 1> tracked_measurement;
+    Eigen::Matrix<double, 4, 1> tracked_measurement = Eigen::Matrix<double, 4, 1>::Zero();
 
     /// @brief 当前跟踪的装甲板对象
-    bbox_t tracked_armor;
+    bbox_t tracked_armor{};
 
     /// @brief 当前跟踪的装甲板的估计观测向量
-    Eigen::Matrix<double, 4, 1> estimated_armor_m;
+    Eigen::Matrix<double, 4, 1> estimated_armor_m = Eigen::Matrix<double, 4, 1>::Zero();
     
     /// @brief 另一对装甲板的旋转半径 (米)
-    double another_r;
+    double another_r = 0.26;
     
     /// @brief 装甲板高度差 (米)，用于处理上下装甲板
-    double dz;
+    double dz = 0.0;
 
     // === 装甲板模型的卡尔曼滤波器状态 ===
     /// @brief 偏航角KF状态 [yaw, yaw_velocity] (2x1)
-    Eigen::Matrix<double, 2, 1> yaw_state;
+    Eigen::Matrix<double, 2, 1> yaw_state = Eigen::Matrix<double, 2, 1>::Zero();
     
     /// @brief 偏航角KF观测 [yaw] (1x1)
-    Eigen::Matrix<double, 1, 1> yaw_measurement;
+    Eigen::Matrix<double, 1, 1> yaw_measurement = Eigen::Matrix<double, 1, 1>::Zero();
 
     /// @brief X坐标KF状态 [x, vx] (2x1)
-    Eigen::Matrix<double, 2, 1> armor_x_state;
+    Eigen::Matrix<double, 2, 1> armor_x_state = Eigen::Matrix<double, 2, 1>::Zero();
     
     /// @brief X坐标KF观测 [x] (1x1)
-    Eigen::Matrix<double, 1, 1> armor_x_measurement;
+    Eigen::Matrix<double, 1, 1> armor_x_measurement = Eigen::Matrix<double, 1, 1>::Zero();
 
     /// @brief Y坐标KF状态 [y, vy] (2x1)
-    Eigen::Matrix<double, 2, 1> armor_y_state;
+    Eigen::Matrix<double, 2, 1> armor_y_state = Eigen::Matrix<double, 2, 1>::Zero();
     
     /// @brief Y坐标KF观测 [y] (1x1)
-    Eigen::Matrix<double, 1, 1> armor_y_measurement;
+    Eigen::Matrix<double, 1, 1> armor_y_measurement = Eigen::Matrix<double, 1, 1>::Zero();
 
     /// @brief Z坐标KF状态 [z, vz] (2x1)
-    Eigen::Matrix<double, 2, 1> armor_z_state;
+    Eigen::Matrix<double, 2, 1> armor_z_state = Eigen::Matrix<double, 2, 1>::Zero();
     
     /// @brief Z坐标KF观测 [z] (1x1)
-    Eigen::Matrix<double, 1, 1> armor_z_measurement;
+    Eigen::Matrix<double, 1, 1> armor_z_measurement = Eigen::Matrix<double, 1, 1>::Zero();
 };  
 
 /**

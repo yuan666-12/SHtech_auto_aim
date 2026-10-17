@@ -14,6 +14,7 @@
 #include "Planner.hpp"
 #include <cstdlib>
 #include <stdexcept>
+#include <sstream>
 
 // === 评测标准开关 ===
 #define ASSESSMENT_CRITERIA 0
@@ -86,7 +87,7 @@ namespace predict
      */
     void Planner::planner_reset()
     {
-        plan.aimed_armor_pos = Eigen::Matrix<double, 3, 1>::Zero();
+        plan = Plan{};
         last_shooted_armor_pos = plan.aimed_armor_pos;
         armor_jump = false;
         plan.aimed_target_type = AimedTargetType::NONE;
@@ -127,6 +128,12 @@ namespace predict
     const Plan& Planner::make_plan(const Target &target, const float bullet_speed,
         const double attitude_yaw, const double attitude_pitch, const Eigen::Matrix3d &R_world2imu, const TP &tp)
     {
+        try {
+        if (!target.tracked_measurement.allFinite() || !target.yaw_state.allFinite() ||
+            !target.armor_x_state.allFinite() || !target.armor_y_state.allFinite() ||
+            !target.armor_z_state.allFinite() || !target.tracked_state.allFinite()) {
+            throw std::runtime_error("non-finite tracker input");
+        }
         double rotation_speed = abs(target.yaw_state(1, 0));
         
         // 根据目标状态和旋转速度更新瞄准策略
@@ -179,9 +186,7 @@ namespace predict
             hit_pos << target.armor_x_state(0, 0), target.armor_y_state(0, 0), target.armor_z_state(0, 0);
             
             // 计算弹丸飞行时间
-            double fly_time = cal_fly_time(hit_pos, bullet_speed, consider_air_resistence);
-            double process_latency = duration_cast<microseconds>(std::chrono::high_resolution_clock::now() - tp).count() / 1e6;   
-            double total_delay = process_latency + comm_latency + fly_time;
+            double total_delay = prediction_delay(hit_pos, bullet_speed, tp);
 
             // 根据装甲板速度预测未来位置
             plan.aimed_armor_pos << hit_pos(0, 0) + total_delay * target.armor_x_state(1, 0), 
@@ -223,16 +228,12 @@ namespace predict
         // 基于整车运动模型预测装甲板位置，使用MPC优化云台轨迹
         else if (plan.aimed_target_type == AimedTargetType::ARMOR_WITH_VEHICLE_MODEL) {
             // 计算平均半径用于初始飞行时间估计
-            double r_average = (target.tracked_state(8, 0) + target.tracked_state(9, 0) + target.tracked_state(8, 0)) / 2;
+            double r_average = target.tracked_state(8, 0) + target.tracked_state(9, 0) / 2.0;
             Pos3D hit_pos_average;
             hit_pos_average << target.tracked_state(2, 0), target.tracked_state(0, 0), target.tracked_state(4, 0);
-            double center_yaw = pw_to_yaw(hit_pos_average);
-            hit_pos_average(0, 0) += sin(center_yaw) * r_average;
-            hit_pos_average(1, 0) += cos(center_yaw) * r_average;
+            hit_pos_average = near_radial_point(hit_pos_average, r_average);
             
-            double fly_time = cal_fly_time(hit_pos_average, bullet_speed, consider_air_resistence);
-            double process_latency = duration_cast<microseconds>(std::chrono::high_resolution_clock::now() - tp).count() / 1e6;   
-            double total_delay = process_latency + comm_latency + fly_time;
+            double total_delay = prediction_delay(hit_pos_average, bullet_speed, tp);
 
             int armor_index;
             // 预测最近的装甲板位置
@@ -333,17 +334,12 @@ namespace predict
         // 瞄准车辆旋转中心，适用于高速旋转目标，预测发射窗口
         else if (plan.aimed_target_type == AimedTargetType::VEHICLE_CENTER_WITH_VEHICLE_MODEL) {
             // 计算平均装甲板位置用于飞行时间估计
-            double r_average = (target.tracked_state(8, 0) + target.tracked_state(9, 0) + target.tracked_state(8, 0)) / 2;
+            double r_average = target.tracked_state(8, 0) + target.tracked_state(9, 0) / 2.0;
             Pos3D hit_pos_average;
             hit_pos_average << target.tracked_state(2, 0), target.tracked_state(0, 0), target.tracked_state(4, 0);
-            double center_yaw_average = pw_to_yaw(hit_pos_average);
-            hit_pos_average(0, 0) += sin(center_yaw_average) * r_average;
-            hit_pos_average(1, 0) += cos(center_yaw_average) * r_average;
+            hit_pos_average = near_radial_point(hit_pos_average, r_average);
             
-            double fly_time = cal_fly_time(hit_pos_average, bullet_speed, consider_air_resistence);
-
-            double process_latency = duration_cast<microseconds>(std::chrono::high_resolution_clock::now() - tp).count() / 1e6;   
-            double total_delay = process_latency + comm_latency + fly_time;
+            double total_delay = prediction_delay(hit_pos_average, bullet_speed, tp);
 
             // 估计预瞄准的装甲板半径
             double next_predicted_yaw = target.tracked_state(6, 0) + target.tracked_state(7, 0) * (total_delay - comm_latency + single_shoot_latency);
@@ -368,16 +364,11 @@ namespace predict
             double next_r = next_aimed_armor_index == 0 ? target.tracked_state(8, 0) : target.tracked_state(9, 0) + target.tracked_state(8, 0);
             Pos3D hit_pos;
             hit_pos << target.tracked_state(2, 0), target.tracked_state(0, 0), target.tracked_state(4, 0);
-            double center_yaw = pw_to_yaw(hit_pos);
-            hit_pos(0, 0) += sin(center_yaw) * next_r;
-            hit_pos(1, 0) += cos(center_yaw) * next_r;
+            hit_pos = near_radial_point(hit_pos, next_r);
 
             // std::cout << "bullet speed: " << bullet_speed << std::endl;
             
-            fly_time = cal_fly_time(hit_pos, bullet_speed, consider_air_resistence);
-
-            process_latency = duration_cast<microseconds>(std::chrono::high_resolution_clock::now() - tp).count() / 1e6;   
-            total_delay = process_latency + comm_latency + fly_time;
+            total_delay = prediction_delay(hit_pos, bullet_speed, tp);
 
             // std::cout << "total_delay: " << total_delay << std::endl;
             // std::cout << "comm_latency: " << comm_latency << std::endl;
@@ -391,7 +382,7 @@ namespace predict
                                 target.tracked_state(4, 0) + total_delay * target.tracked_state(5, 0);
 
             // 计算瞄准方向
-            double aimed_direction = atan(aimed_center_pos(0, 0) / aimed_center_pos(1, 0));
+            double aimed_direction = atan2(aimed_center_pos(0, 0), aimed_center_pos(1, 0));
 
             // 构造虚拟装甲板状态用于计算瞄准点
             Eigen::Matrix<double, 11, 1> aimed_state;
@@ -411,7 +402,7 @@ namespace predict
                                 target.tracked_state(0, 0) + (total_delay - comm_latency + single_shoot_latency) * target.tracked_state(1, 0), 
                                 target.tracked_state(4, 0) + (total_delay - comm_latency + single_shoot_latency) * target.tracked_state(5, 0);
 
-            double shooted_direction = atan(shooted_center_pos(0, 0) / shooted_center_pos(1, 0));
+            double shooted_direction = atan2(shooted_center_pos(0, 0), shooted_center_pos(1, 0));
 
             Eigen::Matrix<double, 11, 1> shooted_state;
             if (next_aimed_armor_index == 0) {
@@ -456,7 +447,7 @@ namespace predict
             plan.target_yaw_acc = 0;
             plan.target_pitch_acc = 0;
 
-            plan.target_distance = distance_3D(aimed_center_pos) - target.tracked_state(8, 0);
+            plan.target_distance = distance_3D(plan.aimed_armor_pos);
 
             // === 射击决策 ===
             // 根据预测装甲板偏航角是否处于发射窗口判断是否发射
@@ -524,7 +515,46 @@ namespace predict
 
         }
 
+        if (plan.aimed_target_type != AimedTargetType::NONE &&
+            (!plan.aimed_armor_pos.allFinite() || !std::isfinite(plan.target_distance) ||
+             !std::isfinite(plan.target_yaw) || !std::isfinite(plan.target_pitch) ||
+             !std::isfinite(plan.target_yaw_speed) || !std::isfinite(plan.target_pitch_speed))) {
+            throw std::runtime_error("non-finite planning result");
+        }
         return plan;
+        } catch (const std::exception &error) {
+            static auto last_report = std::chrono::steady_clock::time_point{};
+            const auto now = std::chrono::steady_clock::now();
+            if (now - last_report >= std::chrono::milliseconds(500)) {
+                std::ostringstream report;
+                report << "[Planner] rejected: " << error.what()
+                       << " measurement(y,x,z,yaw)=" << target.tracked_measurement.transpose()
+                       << " armor_x=" << target.armor_x_state.transpose()
+                       << " armor_y=" << target.armor_y_state.transpose()
+                       << " armor_z=" << target.armor_z_state.transpose()
+                       << " vehicle=" << target.tracked_state.transpose()
+                       << " aimed=" << plan.aimed_armor_pos.transpose()
+                       << " bullet_speed=" << bullet_speed;
+                LOGW_S("%s", report.str().c_str());
+                LOGW_F("%s", report.str().c_str());
+                last_report = now;
+            }
+            planner_reset();
+            return plan;
+        }
+    }
+
+    double Planner::prediction_delay(const Pos3D &position, float bullet_speed,
+                                     const TP &tp) const
+    {
+        const double flight = geometry_only ? 0.0 :
+            cal_fly_time(position, bullet_speed, consider_air_resistence);
+        const double age = duration<double>(std::chrono::high_resolution_clock::now() - tp).count();
+        if (!position.allFinite() || !std::isfinite(flight) || flight < 0.0 ||
+            !std::isfinite(age) || age < 0.0) {
+            throw std::runtime_error("invalid prediction position/time or unreachable trajectory");
+        }
+        return age + comm_latency + flight;
     }
 
     /**
@@ -569,16 +599,16 @@ namespace predict
             if (i == 0 || i == 2) {
                 // 第0和第2个装甲板：使用当前跟踪的半径
                 Pos3D armor_pos;
-                armor_pos << predicted_center_pos(0, 0) + x(8, 0) * sin(predicted_yaw + 1.57 * i), 
-                                predicted_center_pos(1, 0) + x(8, 0) * cos(predicted_yaw + 1.57 * i), 
+                armor_pos << predicted_center_pos(0, 0) - x(8, 0) * sin(predicted_yaw + M_PI_2 * i),
+                                predicted_center_pos(1, 0) - x(8, 0) * cos(predicted_yaw + M_PI_2 * i),
                                 predicted_center_pos(2, 0);
                 predicted_armors_pos.push_back(armor_pos);
             }
             else {
                 // 第1和第3个装甲板：使用另一对装甲板的半径和高度差
                 Pos3D armor_pos;
-                armor_pos << predicted_center_pos(0, 0) + (x(8, 0) + x(9, 0)) * sin(predicted_yaw + 1.57 * i), 
-                                predicted_center_pos(1, 0) + (x(8, 0) + x(9, 0)) * cos(predicted_yaw + 1.57 * i), 
+                armor_pos << predicted_center_pos(0, 0) - (x(8, 0) + x(9, 0)) * sin(predicted_yaw + M_PI_2 * i),
+                                predicted_center_pos(1, 0) - (x(8, 0) + x(9, 0)) * cos(predicted_yaw + M_PI_2 * i),
                                 predicted_center_pos(2, 0) + x(10, 0);
                 predicted_armors_pos.push_back(armor_pos);
             }
@@ -586,7 +616,7 @@ namespace predict
 
         // 寻找距离最近的装甲板
         double min_dist = DBL_MAX;
-        int closest_armor_idx;
+        int closest_armor_idx = -1;
         for (int i = 0; i != 4; i++) {
             double dist = distance_2D(predicted_armors_pos[i]);
 
@@ -596,6 +626,7 @@ namespace predict
             }
         }
 
+        if (closest_armor_idx < 0) throw std::runtime_error("invalid predicted armor positions");
         armor_index = closest_armor_idx;
 
         Eigen::Matrix<double, 3, 1> res;
@@ -622,19 +653,22 @@ namespace predict
                                                             const double attitude_pitch,
                                                             const Eigen::Matrix3d &R_world2imu) 
     {
-        Pos3D pw{aimed_armor_pos(0, 0), aimed_armor_pos(1, 0), aimed_armor_pos(2, 0)};
-
-        // 计算弹丸飞行时间并进行弹道补偿
+        if (!aimed_armor_pos.allFinite()) throw std::runtime_error("invalid aim point");
+        const double horizontal = std::hypot(aimed_armor_pos.x(), aimed_armor_pos.y());
+        if (horizontal <= 1e-9) throw std::runtime_error("undefined yaw at pivot axis");
+        double pitch = std::atan2(aimed_armor_pos.z(), horizontal);
         if (!geometry_only) {
-            double fly_time = cal_fly_time(pw, bullet_speed, consider_air_resistence);
-            pw(2, 0) += 0.5 * g * fly_time * fly_time;  // World Z points up.
+            const auto trajectory = solve_ballistic_trajectory(
+                aimed_armor_pos, bullet_speed, consider_air_resistence);
+            if (trajectory.flight_time < 0.0) throw std::runtime_error("unreachable aim point");
+            pitch = trajectory.pitch;
         }
-
-        // 世界坐标系转换为IMU坐标系
-        Pos3D pi = coord_transformer.pw_to_pi(pw, R_world2imu);   
-
-        // 计算IMU坐标系下的目标角度，并叠加机器人当前姿态
-        return {atan(pi(0, 0) / pi(2, 0)) + attitude_yaw + yaw_comp, atan(pi(1, 0) / pi(2, 0)) + attitude_pitch + pitch_comp};
+        // Absolute IMU-world yaw/pitch; MCU tracks these final angles directly.
+        const double world_yaw = std::atan2(-aimed_armor_pos.x(), aimed_armor_pos.y());
+        const double yaw = attitude_yaw + limit_rad(world_yaw - attitude_yaw);
+        (void)attitude_pitch;
+        (void)R_world2imu;
+        return {yaw + yaw_comp, pitch + pitch_comp};
     }
 
     /**
@@ -897,17 +931,16 @@ namespace predict
             target_yaw_speed = (cross / r2);
         }
 
-        // === 计算俯仰角速度 ===
-        // 使用Y-Z平面的位置和速度向量
-        r_vec << y_state(0, 0), z_state(0, 0);
-        v_vec << y_state(1, 0), z_state(1, 0);
-
-        r2 = r_vec.squaredNorm();
-        if (r2 < 1e-6) {
+        // pitch=atan2(z,hypot(x,y)); include both horizontal components.
+        const double horizontal = std::hypot(x_state(0), y_state(0));
+        const double distance_squared = horizontal * horizontal + z_state(0) * z_state(0);
+        if (horizontal < 1e-6 || distance_squared < 1e-6) {
             target_pitch_speed = 0.0;
         } else {
-            double cross = r_vec.x() * v_vec.y() - r_vec.y() * v_vec.x();
-            target_pitch_speed = (cross / r2);
+            const double horizontal_speed =
+                (x_state(0) * x_state(1) + y_state(0) * y_state(1)) / horizontal;
+            target_pitch_speed =
+                (horizontal * z_state(1) - z_state(0) * horizontal_speed) / distance_squared;
         }
 
         return {target_yaw_speed, target_pitch_speed};

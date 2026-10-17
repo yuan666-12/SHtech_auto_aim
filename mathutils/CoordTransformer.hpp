@@ -87,7 +87,7 @@ inline const std::vector<cv::Point3d> pw_blue_3_test = {
      * @details 该类管理相机参数，执行PnP算法，并提供各种坐标系之间的变换功能
      *          支持的坐标系：
      *          - 相机坐标系 (Camera): 相机光心为原点，使用opencv2::solvepnp使用的坐标系
-     *          - IMU坐标系 (IMU): 云台旋转点为原点的坐标系，IMU给出云台姿态数据，使用opencv2::solvepnp使用的坐标系
+     *          - IMU坐标系 (IMU): IMU测量参考点为原点，左/上/前为正方向
      *          - 世界坐标系 (World): 全局坐标系，以云台旋转点为原点的坐标系，欧拉角固定为0
      *          - 图像坐标系 (Image): 图像像素坐标系
      */
@@ -105,6 +105,9 @@ inline const std::vector<cv::Point3d> pw_blue_3_test = {
         // === 坐标变换参数 (Eigen格式，用于数学计算) ===
         /// @brief 相机到IMU的平移向量 [3x1]
         Eigen::Vector3d T_camera2imu;
+        // World origin is the stationary yaw/pitch pivot, not the moving IMU.
+        Eigen::Vector3d T_pivot2imu = Eigen::Vector3d::Zero();
+        void load_gimbal_geometry();
         
         /// @brief 相机到IMU的旋转矩阵 [3x3]
         Eigen::Matrix3d R_camera2imu;
@@ -204,7 +207,8 @@ inline const std::vector<cv::Point3d> pw_blue_3_test = {
          */
         inline Pos3D pc_to_pw(const Pos3D &pc, const Eigen::Matrix3d &R_world2imu)
         {
-            return R_world2imu.transpose() * (R_camera2imu * pc + T_camera2imu);
+            return R_world2imu.transpose() *
+                   (R_camera2imu * pc + T_camera2imu + T_pivot2imu);
         }
 
         /**
@@ -217,7 +221,8 @@ inline const std::vector<cv::Point3d> pw_blue_3_test = {
          */
         inline Pos3D pw_to_pc(const Pos3D &pw, const Eigen::Matrix3d &R_world2imu)
         {
-            return R_camera2imu.transpose() * (R_world2imu * pw - T_camera2imu);
+            return R_camera2imu.transpose() *
+                   (R_world2imu * pw - T_pivot2imu - T_camera2imu);
         }
 
         /**
@@ -229,7 +234,7 @@ inline const std::vector<cv::Point3d> pw_blue_3_test = {
          */
         inline Pos3D pw_to_pi(const Pos3D &pw, const Eigen::Matrix3d &R_world2imu)
         {
-            return R_world2imu * pw;
+            return R_world2imu * pw - T_pivot2imu;
         }
 
         /**
@@ -242,7 +247,14 @@ inline const std::vector<cv::Point3d> pw_blue_3_test = {
          */
         inline Pos3D pc_to_pu(const Pos3D &pc)
         {
-            return F * pc / pc(2, 0);
+            if (!pc.allFinite() || pc.z() <= 0.0) {
+                return Pos3D::Constant(std::numeric_limits<double>::quiet_NaN());
+            }
+            std::vector<cv::Point3d> object{{pc.x(), pc.y(), pc.z()}};
+            std::vector<cv::Point2d> pixels;
+            cv::projectPoints(object, cv::Vec3d::all(0), cv::Vec3d::all(0),
+                              F_MAT, C_MAT, pixels);
+            return {pixels[0].x, pixels[0].y, 1.0};
         }
         
     }; // class CoordTransformer

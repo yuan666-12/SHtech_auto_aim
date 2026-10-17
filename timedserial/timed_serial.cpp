@@ -71,12 +71,27 @@ namespace hardware
      */
     void TimedSerial::handle_planner_message(const pipeline::bridge::PlannerToSerialMessage &msg)
     {
-        // 使用互斥锁保护跨线程访问的命令数组和姿态数据
+        const auto finite_attitude = [](const Attitude &a) {
+            return std::isfinite(a.yaw()) && std::isfinite(a.pitch()) && std::isfinite(a.roll());
+        };
+        const bool valid = finite_attitude(msg.attitude) && msg.plan_period.count() > 0 &&
+            std::all_of(msg.command_array.begin(), msg.command_array.end(),
+                [](const RobotCommand &c) {
+                    return std::isfinite(c.yaw_angle) && std::isfinite(c.pitch_angle) &&
+                           std::isfinite(c.yaw_speed) && std::isfinite(c.pitch_speed) &&
+                           std::isfinite(c.yaw_acc) && std::isfinite(c.pitch_acc) &&
+                           std::isfinite(c.distance) && c.distance >= 0.0f;
+                });
+        const Attitude pose = finite_attitude(msg.attitude) ? msg.attitude : handle_attitude_get();
         std::lock_guard<std::mutex> lock(command_mutex_);
         command_start_time_ = std::chrono::steady_clock::now();
-        command_array_ = msg.command_array;
-        attitude_at_last_frame_ = msg.attitude;
-        plan_period_ = msg.plan_period;
+        attitude_at_last_frame_ = pose;
+        plan_period_ = valid ? msg.plan_period : std::chrono::microseconds{2000};
+        command_array_ = valid ? msg.command_array : command_array_t{};
+        if (!valid) {
+            LOGW_S("[TimedSerial] rejected non-finite planner command; holding RX angles");
+            LOGW_F("[TimedSerial] rejected non-finite planner command; holding RX angles");
+        }
     }
 
     /**
@@ -160,67 +175,48 @@ namespace hardware
      */
     bool TimedSerial::read_latest_command_and_attitude()
     {
-        // 使用互斥锁保护共享数据的并发访问
         std::lock_guard<std::mutex> lock(command_mutex_);
-
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - command_start_time_);
-
-        if (plan_period_.count() <= 0)
-        {
-            return false;
-        }
-        int64_t expectedIndexOne = static_cast<int64_t>(elapsed.count() / plan_period_.count());
-
-        assert(expectedIndexOne >= 0 && "[timedserial_new] Elapsed time calculation error!");
-        if (expectedIndexOne >= CMDARRAYLENGTH - 1)
-        {
-            // Visual planning is normally slower than the 100 ms STM32
-            // communication watchdog.  Hold and resend the last command
-            // briefly so a valid, CRC-protected stream reaches the MCU at
-            // the serial loop rate.  On expiry send one explicit no-target
-            // packet, which clears the MCU tracker safely.
-            if (have_fresh_command_ &&
-                now - last_fresh_command_time_ < command_hold_timeout_)
-            {
-                return true;
+        if (plan_period_.count() <= 0) return false;
+        const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - command_start_time_);
+        if (elapsed.count() < 0) return false;
+        if (elapsed < command_hold_timeout_) {
+            const auto index = elapsed.count() / plan_period_.count();
+            if (index < static_cast<int64_t>(CMDARRAYLENGTH - 1)) {
+                const auto offset = elapsed % plan_period_;
+                command_cache_ = command_linear_interpolation(
+                    command_array_[index], command_array_[index + 1],
+                    float(offset.count()) / float(plan_period_.count()));
+            } else {
+                // Hero accepts only final angles. Continue PC extrapolation
+                // after the 18 ms command array, up to the 200 ms freshness limit.
+                const double extra = (elapsed.count() -
+                    int64_t(CMDARRAYLENGTH - 1) * plan_period_.count()) / 1e6;
+                command_cache_ = command_extrapolation(command_array_.back(), extra);
             }
-            if (have_fresh_command_)
-            {
-                command_cache_.distance = 0.0f;
-                command_cache_.target_id = 0;
-                command_cache_.fire_enable = 0;
-                have_fresh_command_ = false;
-                return true;
-            }
-            return false;
+            attitude_cache_ = attitude_at_last_frame_;
+            have_fresh_command_ = true;
+            return true;
         }
-
-        std::chrono::microseconds offsetInPeriod = elapsed % plan_period_;
-        command_cache_ = command_linear_interpolation(
-            command_array_[expectedIndexOne], 
-            command_array_[expectedIndexOne + 1], 
-            float(offsetInPeriod.count()) / float(plan_period_.count()));
-
-        // 使用 Planner 提供的姿态数据作为基准
-        attitude_cache_ = attitude_at_last_frame_;
-
-        last_fresh_command_time_ = now;
-        have_fresh_command_ = true;
-
-        return true;
+        if (have_fresh_command_) {
+            command_cache_ = RobotCommand{};
+            have_fresh_command_ = false;
+            return true;
+        }
+        return false;
     }
 
     void TimedSerial::apply_tracking_slew_limit(float &yaw_deg, float &pitch_deg,
                                                  bool target_valid)
     {
-        if (!target_valid)
+        if (!target_valid || !std::isfinite(yaw_deg) || !std::isfinite(pitch_deg))
         {
             filtered_target_initialized_ = false;
             return;
         }
 
-        if (!filtered_target_initialized_)
+        if (!filtered_target_initialized_ ||
+            !std::isfinite(filtered_yaw_deg_) || !std::isfinite(filtered_pitch_deg_))
         {
             filtered_yaw_deg_ = yaw_deg;
             filtered_pitch_deg_ = pitch_deg;
@@ -287,7 +283,14 @@ namespace hardware
                     float yaw_target = attitude_cache_.yaw() + command_cache_.yaw_angle;
                     float pitch_target = attitude_cache_.pitch() + command_cache_.pitch_angle;
                     const bool target_valid = command_cache_.target_id != 0 &&
-                                              command_cache_.distance > 0.0f;
+                        command_cache_.distance > 0.0f &&
+                        std::isfinite(yaw_target) && std::isfinite(pitch_target);
+                    if (!target_valid) {
+                        const auto current = handle_attitude_get();
+                        yaw_target = current.yaw();
+                        pitch_target = current.pitch();
+                        command_cache_ = RobotCommand{};
+                    }
                     apply_tracking_slew_limit(yaw_target, pitch_target, target_valid);
 
                     driver_->transmit_cmd(

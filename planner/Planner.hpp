@@ -76,7 +76,7 @@ namespace predict
 
         // === 装甲板切换检测参数 ===
         /// @brief 装甲板切换时间间隔 (秒)
-        const int armor_jump_interval = 0.1f;
+        const double armor_jump_interval = 0.1;
 
         // === 旋转速度分类阈值 ===
         /// @brief 慢速旋转上限 (弧度/秒)
@@ -222,6 +222,7 @@ namespace predict
          * @details 根据跟踪状态和旋转速度自动选择最适合的云台策略
          */
         void update_aimed_target_type(const Target &target, double rotation_speed);
+        double prediction_delay(const Pos3D &position, float bullet_speed, const TP &tp) const;
 
         /**
          * @brief 计算目标角速度

@@ -103,6 +103,9 @@ namespace predict
      */
     void MultiPolicyPredictorSubModule::predict(std::shared_ptr<ThreadDataPack> data)
     {
+        cx = data->frame.cols * 0.5;
+        cy = data->frame.rows * 0.5;
+        maxSD = std::max(1.0, std::hypot(cx, cy));
         // LOGT_S();
 
         // === 提取数据包信息 ===
@@ -180,6 +183,7 @@ namespace predict
                 Eigen::Matrix<double, 4, 1> measurement;
                 bool success = coord_transformer.pnp_get_measurement(armor.pts, armor.tag_id, armor.color_id,
                                                                                     attitude_yaw, R_world2imu, yaw_in_camera, measurement);
+                if (!success || !measurement.allFinite() || !std::isfinite(yaw_in_camera)) continue;
                 Pos3D m_pw(measurement(1, 0), measurement(0, 0), measurement(2, 0));
                 double dist = distance_3D(m_pw);
                 double height = m_pw(2, 0);
@@ -194,7 +198,7 @@ namespace predict
                 }
 
                 if (success && dist < max_distance_accept &&
-                    abs(measurement(2, 0)) < max_yaw_accept &&
+                    abs(yaw_in_camera) < max_yaw_accept &&
                     abs(height) < max_height_accept) {
                     bool already_in_tracking = false;
                     for (int i = 0; i < NUM_TRACKER; ++i) {

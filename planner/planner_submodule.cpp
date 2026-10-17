@@ -20,17 +20,8 @@ namespace plan
         constexpr std::chrono::microseconds plan_period{2000};
         command_array_t commands;
         for (size_t i = 0; i < CMDARRAYLENGTH; ++i) {
-            commands[i] = RobotCommand{
-                command.distance,
-                command.yaw_angle+i*command.yaw_speed*float(plan_period.count())/1e6f,
-                command.yaw_speed,
-                command.yaw_acc,
-                command.pitch_angle+i*command.pitch_speed*float(plan_period.count())/1e6f,
-                command.pitch_speed,
-                command.pitch_acc,
-                command.fire_enable,
-                command.target_id
-            };
+            commands[i] = command_extrapolation(
+                command, i * double(plan_period.count()) / 1e6);
         }
         return commands;
     }
@@ -124,11 +115,12 @@ namespace plan
                 // }
 
                 send.pitch_angle = (plan.target_pitch - attitude_pitch) / M_PI * 180.0f;         // 俯仰角（转换为度数）
-                send.pitch_speed = plan.target_pitch_speed;                   // 俯仰角速度
-                send.pitch_acc = plan.target_pitch_acc;
+                // PC-only angle extrapolation uses degrees and degrees/second.
+                send.pitch_speed = plan.target_pitch_speed * 180.0 / M_PI;
+                send.pitch_acc = plan.target_pitch_acc * 180.0 / M_PI;
                 send.yaw_angle = (plan.target_yaw - attitude_yaw) / M_PI * 180.0f;            // 偏航角（转换为度数）
-                send.yaw_speed = plan.target_yaw_speed;                       // 偏航角速度
-                send.yaw_acc = plan.target_yaw_acc;
+                send.yaw_speed = plan.target_yaw_speed * 180.0 / M_PI;
+                send.yaw_acc = plan.target_yaw_acc * 180.0 / M_PI;
 
                 send.target_id = target.tracked_armor.tag_id;
 

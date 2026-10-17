@@ -117,7 +117,6 @@ namespace hardware
         // Keep the latest valid command on the wire between visual frames.
         // The STM32 intentionally drops tracking after 100 ms without a
         // valid packet, while detector/planner frames can take longer.
-        std::chrono::steady_clock::time_point last_fresh_command_time_{};
         bool have_fresh_command_ = false;
         static constexpr std::chrono::milliseconds command_hold_timeout_{200};
 

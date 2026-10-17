@@ -7,17 +7,32 @@
 
 #include "CoordTransformer.hpp"
 #include "armor_policy.hpp"
+#include <stdexcept>
 
 namespace mathutils
 {
     // 定义静态成员变量
     std::unique_ptr<CoordTransformer> CoordTransformer::instance_ = nullptr;
 
+    void CoordTransformer::load_gimbal_geometry()
+    {
+        cv::FileStorage geometry(PROJECT_DIR "/asset/gimbal_geometry_hero.yml",
+                                 cv::FileStorage::READ);
+        cv::Mat offset;
+        geometry["T_pivot2imu"] >> offset;
+        if (!geometry.isOpened() || offset.rows != 3 || offset.cols != 1 ||
+            !cv::checkRange(offset)) {
+            throw std::runtime_error("invalid Hero pivot-to-IMU geometry");
+        }
+        cv::cv2eigen(offset, T_pivot2imu);
+    }
+
     /**
      * @brief 默认构造函数 - 初始化所有变换矩阵为零矩阵
      */
     CoordTransformer::CoordTransformer(bool adjust_)
     {
+        load_gimbal_geometry();
         // 初始化相机到IMU的平移向量 (3x1)
         T_camera2imu_MAT = cv::Mat::zeros(3, 1, CV_64FC1);
         
@@ -53,6 +68,7 @@ namespace mathutils
      */
     CoordTransformer::CoordTransformer(const std::string camera_param, bool adjust_)
     {
+        load_gimbal_geometry();
         // 打开相机参数文件
         cv::FileStorage fin(camera_param, cv::FileStorage::READ);
         
@@ -183,7 +199,7 @@ namespace mathutils
         cv::Mat rvec, tvec;  // 旋转向量和平移向量
         bool success = cv::solvePnP(pw_cur, pu, F_MAT, C_MAT, rvec, tvec, false, cv::SOLVEPNP_IPPE);
 
-        if (!success) {
+        if (!success || !cv::checkRange(rvec) || !cv::checkRange(tvec)) {
             return false;
         }
         
@@ -192,6 +208,9 @@ namespace mathutils
         Pos3D pc, pw, pi;  // 相机坐标系、世界坐标系、IMU坐标系
         
         cv::cv2eigen(tvec, pc);  // PnP得到的是相机坐标系中的位置
+        if (!pc.allFinite() || pc.z() <= 0.0 || !R_world2imu.allFinite()) {
+            return false;
+        }
 
         // std::cout << "T_camera2imu: " << T_camera2imu << std::endl;
         // std::cout << "R_camera2imu: " << R_camera2imu << std::endl;
@@ -201,7 +220,7 @@ namespace mathutils
         pi = R_camera2imu * pc + T_camera2imu;
 
         // IMU坐标系 -> 世界坐标系
-        pw = R_world2imu.transpose() * pi;
+        pw = pc_to_pw(pc, R_world2imu);
 
         // === 计算装甲板四个角点的世界坐标 ===
         cv::Mat mat_R;
@@ -236,8 +255,17 @@ namespace mathutils
 
         // === 组装最终测量值 ===
         // 测量值格式：[y坐标, x坐标, z坐标, 绝对偏航角]，该测量值对应于ekf的测量项
-        // 绝对偏航角 = 相机坐标系中的偏航角 - 机器人姿态偏航角， [-pi, pi]
-        measurement << pw[1], pw[0], pw[2], mathutils::limit_rad(yaw_in_camera - attitude_yaw);
+        // 绝对朝向由法向量旋转到世界坐标后计算，范围 [-pi, pi]
+        // Transform the outward-facing normal as a direction (no translation).
+        // The tracker model is ya=yc-r*cos(theta), xa=xc-r*sin(theta).
+        const Pos3D normal_world =
+            R_world2imu.transpose() * R_camera2imu * armor_v_z_c;
+        if (!normal_world.allFinite() ||
+            normal_world.head<2>().squaredNorm() <= 1e-16) return false;
+        const double world_armor_yaw =
+            std::atan2(-normal_world.x(), -normal_world.y());
+        measurement << pw[1], pw[0], pw[2], world_armor_yaw;
+        (void)attitude_yaw; // Already included in R_world2imu.
         // measurement << pw[1], pw[0], pw[2], yaw_in_camera - attitude_yaw;
 
         return true;

@@ -23,6 +23,7 @@
 #include <functional>
 #include <iostream>
 #include <cmath>
+#include <limits>
 
 namespace mathutils
 {
@@ -86,6 +87,7 @@ namespace mathutils
         Matrix_zzd R;
         Matrix_xxd P_pri;
         Matrix_xxd P_post;
+        Matrix_xxd P_initial;
         Matrix_xzd K;
         Matrix_x1d X_pri;
         Matrix_x1d X_post;
@@ -122,7 +124,8 @@ namespace mathutils
                const Add_func &x_add_, const Minus_func &x_minus_,
                int max_iter_ = 5, double stop_threshold_ = 1e-4)
         : f(f_), h(h_), calculate_F(cal_F_), calculate_H(cal_H_), update_Q(update_Q_),
-          update_R(update_R_), P_post(P0), X_post(X0), 
+          update_R(update_R_), P_pri(P0), P_post(P0), P_initial(P0),
+          X_pri(X0), X_post(X0),
           x_add(x_add_), x_minus(x_minus_),
           max_iter(max_iter_), stop_threshold(stop_threshold_)
         {
@@ -134,10 +137,12 @@ namespace mathutils
          */
         void reset(const Matrix_x1d &X0) 
         { 
-            X_post = X0; 
-            // P_post.setIdentity();
-            // P_pri.setIdentity();
+            X_post = X_pri = X0;
+            P_post = P_pri = P_initial;
         }
+
+        // Applying a radius constraint is NOT a new tracking session.
+        void set_state(const Matrix_x1d &state) { X_post = state; }
 
         /**
          * @brief 完整重置滤波器
@@ -165,7 +170,9 @@ namespace mathutils
             update_Q = update_Q_; 
             update_R = update_R_;
             P_post = P0; 
+            P_initial = P_pri = P0;
             X_post = X0;
+            X_pri = X0;
             x_add = x_add_; 
             x_minus = x_minus_;
         }
@@ -221,6 +228,11 @@ namespace mathutils
         Matrix_x1d update(const Matrix_z1d &Z, const int id)
         {
             R = update_R(Z);
+            const auto invalid = [] {
+                return Matrix_x1d::Constant(std::numeric_limits<double>::quiet_NaN()).eval();
+            };
+            if (!Z.allFinite() || !R.allFinite() || !X_pri.allFinite() ||
+                !P_pri.allFinite()) return invalid();
             
             // 迭代初始点设为预测值 (先验)
             Matrix_x1d X_cur = X_pri; 
@@ -233,22 +245,29 @@ namespace mathutils
                 // 2. 计算卡尔曼增益
                 // K = P_pri * H^T * (H * P_pri * H^T + R)^-1
                 Matrix_zzd S = H * P_pri * H.transpose() + R;
-                K = P_pri * H.transpose() * S.inverse();
+                Eigen::LDLT<Matrix_zzd> decomposition(S);
+                if (!S.allFinite() || decomposition.info() != Eigen::Success ||
+                    !decomposition.isPositive()) return invalid();
+                K = decomposition.solve((P_pri * H.transpose()).transpose()).transpose();
 
                 // 3. 计算残差
                 // 观测残差: z - h(x_k)
                 Matrix_z1d innovation = Z - h(X_cur, id);
+                if constexpr (V_Z == 4) {
+                    innovation(3) = std::remainder(innovation(3), 2.0 * M_PI);
+                }
 
                 // 先验残差: x_pri - x_k (使用 x_minus 处理角度归一化)
                 Matrix_x1d dx_pri = x_minus(X_pri, X_cur);
 
                 // 4. 计算状态修正量
-                // IESEKF 更新公式: x_{k+1} = x_pri + K * (innovation + H * dx_pri)
+                // dx_pri = prior-current, so the correction has a MINUS sign.
                 // 这一步将当前工作点拉向"观测"和"先验"的平衡点
-                Matrix_x1d dx = K * (innovation + H * dx_pri);
+                Matrix_x1d dx = K * (innovation - H * dx_pri);
                 
                 // 得到下一次迭代的状态
                 Matrix_x1d X_next = x_add(X_pri, dx);
+                if (!X_next.allFinite()) return invalid();
 
                 // 5. 收敛判断
                 // 比较 X_next 和 X_cur 的差异
@@ -265,7 +284,9 @@ namespace mathutils
             
             // 更新协方差 (使用最后一次线性化的 H)
             // 注意：这里使用 Joseph 形式会更稳定，但计算量更大
-            P_post = (Matrix_xxd::Identity() - K * H) * P_pri;
+            const Matrix_xxd correction = Matrix_xxd::Identity() - K * H;
+            P_post = correction * P_pri * correction.transpose() + K * R * K.transpose();
+            P_post = (0.5 * (P_post + P_post.transpose())).eval();
 
             return X_post;
         }

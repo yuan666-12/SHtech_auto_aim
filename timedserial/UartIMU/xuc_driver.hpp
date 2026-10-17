@@ -46,8 +46,8 @@ struct HeroXucControlPacket {
     uint8_t header;       // byte 0, fixed 0xA5
     float pitch;          // bytes 1..4, target pitch angle, degrees
     float yaw;            // bytes 5..8, target yaw angle, degrees
-    float yaw_diff;       // bytes 9..12, yaw angular rate/feedforward, deg/s
-    float pitch_diff;     // bytes 13..16, pitch angular rate/feedforward, deg/s
+    float yaw_diff;       // bytes 9..12, unused Hero legacy slot; always 0
+    float pitch_diff;     // bytes 13..16, unused Hero legacy slot; always 0
     float distance;       // bytes 17..20, target distance, metres; <=0 no target
     uint8_t fireadvice;   // byte 21, bit0 is the fire recommendation
     uint8_t reserved[3];  // bytes 22..24, protocol padding

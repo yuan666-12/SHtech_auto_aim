@@ -6,6 +6,7 @@
 #include "xuc_conventions.hpp"
 
 #include <cerrno>
+#include <cmath>
 #include <array>
 #include <algorithm>
 #include <cstdlib>
@@ -242,6 +243,13 @@ void XucDriver::transmit_cmd(float yaw, float yaw_spd, float pitch, float pitch_
     const bool fire_mode_enabled = fire_mode_enabled_.load();
     const bool dry_run = xuc_dry_run();
     if (!fire_mode_enabled && !dry_run) return;
+    if (!std::isfinite(yaw) || !std::isfinite(pitch) || !std::isfinite(dist) || dist < 0.0f) {
+        LOGW_S("[HeroXuc] rejected invalid final angle/distance; no UART write");
+        LOGW_F("[HeroXuc] rejected invalid final angle/distance; no UART write");
+        return;
+    }
+    (void)yaw_spd;
+    (void)pitch_spd;
 
     (void)yaw_acc;
     (void)pitch_acc;
@@ -268,11 +276,11 @@ void XucDriver::transmit_cmd(float yaw, float yaw_spd, float pitch, float pitch_
         std::memcpy(pkt.data() + offset, &value, sizeof(value));
     };
     const float mcu_yaw = xuc_conventions::mcu_yaw_from_internal(yaw);
-    const float mcu_yaw_spd = xuc_conventions::mcu_yaw_from_internal(yaw_spd);
+    const float mcu_yaw_spd = 0.0f; // Unused Hero legacy slot; final angle is above.
     put_float(1, constrained_pitch);
     put_float(5, mcu_yaw);
     put_float(9, mcu_yaw_spd);
-    put_float(13, pitch_spd);
+    put_float(13, 0.0f);
     put_float(17, (target_id != 0) ? dist : 0.0f);
     // Tracking trials may actuate yaw/pitch but must never advise firing.
     pkt[21] = track_only() ? 0U : static_cast<uint8_t>(shoot & 0x01);
@@ -285,7 +293,7 @@ void XucDriver::transmit_cmd(float yaw, float yaw_spd, float pitch, float pitch_
           << (fire_mode_enabled ? "/ENABLED" : "/BLOCKED") << "] pitch="
           << std::fixed << std::setprecision(3)
           << constrained_pitch << " yaw=" << mcu_yaw
-          << " yaw_diff=" << mcu_yaw_spd << " pitch_diff=" << pitch_spd
+          << " yaw_diff=" << mcu_yaw_spd << " pitch_diff=" << 0.0f
           << " distance=" << ((target_id != 0) ? dist : 0.0f)
           << " fire=" << static_cast<unsigned>(pkt[21])
           << " yaw_internal=" << yaw << " v_y=0 raw=" << raw;
@@ -367,6 +375,10 @@ bool XucDriver::process_status_packet(const uint8_t* data)
     HeroXucStatusPacket pkt{};
     memcpy(&pkt, data, sizeof(pkt));
     if (pkt.header != 0x5A) return false;
+    if (!std::isfinite(pkt.yaw) || !std::isfinite(pkt.pitch) || !std::isfinite(pkt.roll)) {
+        LOGW_S("[HeroXuc] rejected non-finite RX attitude");
+        return false;
+    }
 
     // STM32 mirrors its CRC-validated tracking gate in status bit 1.  This
     // diagnostic bit has no control effect and is available only in logs.
