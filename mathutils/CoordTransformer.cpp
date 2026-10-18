@@ -5,6 +5,7 @@
  * @date 2025/11/15
  */
 
+#include "gui_control.hpp"
 #include "CoordTransformer.hpp"
 #include "armor_policy.hpp"
 #include <stdexcept>
@@ -55,10 +56,10 @@ namespace mathutils
         adjust = adjust_;
 
         if (adjust) {
-            cv::namedWindow("transformer trackbar", cv::WINDOW_AUTOSIZE);
+            autoaim_gui::namedWindow("transformer trackbar", cv::WINDOW_AUTOSIZE);
         
-            cv::createTrackbar("pw_length", "transformer trackbar", &pw_length, 250, 0);
-            cv::createTrackbar("pw_width", "transformer trackbar", &pw_width, 250, 0);
+            autoaim_gui::createTrackbar("pw_length", "transformer trackbar", &pw_length, 250, 0);
+            autoaim_gui::createTrackbar("pw_width", "transformer trackbar", &pw_width, 250, 0);
         }
     }
 
@@ -90,10 +91,10 @@ namespace mathutils
         adjust = adjust_;
 
         if (adjust) {
-            cv::namedWindow("transformer trackbar", cv::WINDOW_AUTOSIZE);
+            autoaim_gui::namedWindow("transformer trackbar", cv::WINDOW_AUTOSIZE);
         
-            cv::createTrackbar("pw_length", "transformer trackbar", &pw_length, 250, 0);
-            cv::createTrackbar("pw_width", "transformer trackbar", &pw_width, 250, 0);
+            autoaim_gui::createTrackbar("pw_length", "transformer trackbar", &pw_length, 250, 0);
+            autoaim_gui::createTrackbar("pw_width", "transformer trackbar", &pw_width, 250, 0);
         }
     }
 

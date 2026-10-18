@@ -49,7 +49,7 @@ struct HeroXucControlPacket {
     float yaw_diff;       // bytes 9..12, unused Hero legacy slot; always 0
     float pitch_diff;     // bytes 13..16, unused Hero legacy slot; always 0
     float distance;       // bytes 17..20, target distance, metres; <=0 no target
-    uint8_t fireadvice;   // byte 21, bit0 is the fire recommendation
+    uint8_t fireadvice;   // byte 21: 0 stop, 1 continuous fire, 2 single shot
     uint8_t reserved[3];  // bytes 22..24, protocol padding
     float v_y;            // bytes 25..28, reserved motion term; currently 0
     uint16_t checksum;    // bytes 29..30, CRC16 of bytes 0..28, low byte first

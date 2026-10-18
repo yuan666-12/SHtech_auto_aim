@@ -243,7 +243,8 @@ void XucDriver::transmit_cmd(float yaw, float yaw_spd, float pitch, float pitch_
     put_float(13, 0.0f);
     put_float(17, (target_id != 0) ? dist : 0.0f);
     // Tracking trials may actuate yaw/pitch but must never advise firing.
-    pkt[21] = (track_only() || constrained_pitch != pitch) ? 0U : static_cast<uint8_t>(shoot & 0x01);
+    pkt[21] = (track_only() || constrained_pitch != pitch || target_id == 0 ||
+               dist <= 0.0f || shoot > 2) ? 0U : shoot;
     put_float(25, 0.0f);
     append_crc16(pkt.data(), pkt.size());
 

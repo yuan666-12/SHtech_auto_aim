@@ -12,6 +12,8 @@
 // modules
 #include "common.hpp"
 #include "attitude_history.hpp"
+#include "fire_control.hpp"
+#include "hero_diagnostics.hpp"
 
 // packages
 #include <stdint.h>
@@ -116,6 +118,12 @@ namespace hardware
         std::chrono::microseconds plan_period_{0};
         std::chrono::steady_clock::time_point command_start_time_{};
         std::chrono::steady_clock::time_point observation_deadline_{};
+        bool fire_control_eligible_ = false, fire_eligible_cache_ = false;
+        AimedTargetType fire_aim_mode_ = AimedTargetType::NONE;
+        AimedTargetType fire_aim_mode_cache_ = AimedTargetType::NONE;
+        uint64_t single_shot_id_ = 0, single_shot_id_cache_ = 0;
+        fire_control::Gate fire_gate_;
+        hero_log::RateGate fire_log_gate_;
         // Keep the latest valid command on the wire between visual frames.
         // The STM32 intentionally drops tracking after 100 ms without a
         // valid packet, while detector/planner frames can take longer.

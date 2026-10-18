@@ -118,6 +118,7 @@
 
 
 #include <cstdlib>
+#include "gui_control.hpp"
 #include "main.hpp"
 
 
@@ -209,6 +210,7 @@ bool init(void)
 
     LOGM_F("open log file success!");
     LOGM_S("open log file success!");
+    LOGM_S("[GUI] headless=%d (AUTOAIM_HEADLESS)", autoaim_gui::headless());
 
     // 初始化 CoordTransformer 单例
     mathutils::CoordTransformer::Init(parser.get_string("camera_para"), parser.get_bool("transformer_adjust_armor_size"));

@@ -3,6 +3,7 @@
 // Combines pipeline integration and prediction algorithm in one class
 //
 
+#include "gui_control.hpp"
 #include "planner_submodule.hpp"
 #include "tracking_policy.hpp"
 #include "hero_diagnostics.hpp"
@@ -72,6 +73,15 @@ namespace plan
             data->attitude,
             plan_period
         };
+        msg.aim_mode = plan.aimed_target_type;
+        msg.fire_control_eligible = has_fixed_target && data->attitude_valid &&
+            target.predictor_state == TrackingState::TRACKING &&
+            target.observation_updated && !target.measurement_rejected &&
+            !target.filter_reset && !plan.prediction_rejected &&
+            plan.aimed_target_type != AimedTargetType::NONE &&
+            plan.aimed_target_type != AimedTargetType::ARMOR_WITH_NO_MODEL;
+        if (send.fire_enable == 2)
+            msg.single_shot_id = ++single_shot_sequence_;
         const double observation_age = tracking_policy::observation_age(
             target.last_observation_time,std::chrono::high_resolution_clock::now());
         const auto updated_at = target.last_observation_update_time;
@@ -424,8 +434,8 @@ namespace plan
         cv::putText(im2show, UpdatingModelType2String(target.updating_model_type), right_top + 1 * offset, cv::FONT_HERSHEY_SIMPLEX, 1, colors[1]);
         cv::putText(im2show, AimedTargetType2String(plan.aimed_target_type), right_top + 2 * offset, cv::FONT_HERSHEY_SIMPLEX, 1, colors[1]);
 
-        cv::imshow("predictor_real_world", im2show);
-        cv::waitKey(1);
+        autoaim_gui::imshow("predictor_real_world", im2show);
+        autoaim_gui::waitKey(1);
     }
 
     /**
@@ -493,8 +503,8 @@ namespace plan
         cv::line(hh, origin, point, {0, 255, 0}, 2);
 
         // 显示仿真图像 
-        cv::imshow("predictor_sim", hh);
-        cv::waitKey(1);
+        autoaim_gui::imshow("predictor_sim", hh);
+        autoaim_gui::waitKey(1);
     }                                           
 
 

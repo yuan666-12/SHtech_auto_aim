@@ -1,6 +1,7 @@
 // Copyright (C) 2025
 // Licensed under the MIT License.
 
+#include "gui_control.hpp"
 #include "armor_corner_optimizer.hpp"
 #include <chrono>
 
@@ -198,8 +199,8 @@ namespace detect
         const auto t_visualize_start = Clock::now();
         cv::Mat roi_visualization = visualizeROIs(input, left_roi, right_roi);
         cv::Mat binary_visualization = visualizeBinaryResults(input, left_binary, right_binary, left_roi, right_roi);
-        cv::imshow("ROI Visualization", roi_visualization);
-        cv::imshow("Binary Visualization", binary_visualization);
+        autoaim_gui::imshow("ROI Visualization", roi_visualization);
+        autoaim_gui::imshow("Binary Visualization", binary_visualization);
         if (stats) {
           stats->visualize_ms += duration_ms(t_visualize_start, Clock::now());
         }

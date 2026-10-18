@@ -1,3 +1,4 @@
+#include "gui_control.hpp"
 #include <cstdlib>
 //
 // Created for pipeline refactor - SensorSubModule
@@ -296,8 +297,8 @@ namespace sensor
                             cv::FONT_HERSHEY_SIMPLEX, 0.6,
                             last_capture_ok ? cv::Scalar(0, 255, 255) : cv::Scalar(0, 0, 255), 2);
 
-            cv::imshow("sensor_submodule", im2show);
-            const int key = cv::waitKey(1);
+            autoaim_gui::imshow("sensor_submodule", im2show);
+            const int key = autoaim_gui::waitKey(1);
             if (key == 'p' || key == 'P') save_pair();
         }
 

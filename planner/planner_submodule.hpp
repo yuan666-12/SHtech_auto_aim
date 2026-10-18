@@ -66,6 +66,7 @@ namespace plan
         pipeline::bridge::PlannerToSerialBridge &planner_bridge;
 
         Planner planner;
+        uint64_t single_shot_sequence_ = 0;
 
         /// @brief 坐标变换器单例 - 负责坐标系转换
         CoordTransformer& coord_transformer;

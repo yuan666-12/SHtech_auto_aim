@@ -13,6 +13,65 @@ int checks=0;
 void require(bool value,const char* message) {
     ++checks;if(!value)throw std::runtime_error(message);
 }
+void fire_gate_checks() {
+    using namespace fire_control;
+    const auto t=Clock::now()+1s;
+    Input in;in.now=t;in.rx_time=t;in.target_id=2;in.aim_mode=2;
+    in.eligible=true;in.distance=3;in.rx_yaw=in.sent_yaw=in.desired_yaw=20;
+    in.rx_pitch=in.sent_pitch=in.desired_pitch=10;in.requested=1;
+    Gate settle(Config{});
+    require(settle.evaluate(in).advice==0,"arrival starts with fire disabled");
+    in.now=t+40ms;
+    require(settle.evaluate(in).advice==0,"one old RX sample cannot prove sustained arrival");
+    in.rx_time=in.now;
+    require(settle.evaluate(in).advice==1,"fresh RX and 40 ms arrival allow continuous fire");
+    in.now+=5ms;in.rx_time=in.now;in.rx_yaw=21;
+    require(settle.evaluate(in).advice==0,"yaw dead-zone tracking error immediately stops fire");
+    in.now+=5ms;in.rx_time=in.now;in.rx_yaw=20;
+    require(settle.evaluate(in).advice==0,"arrival dwell restarts after a tracking error");
+    Config immediate;immediate.settle_ms=0;
+    const auto check=[&](Input x){Gate gate(immediate);return gate.evaluate(x);};
+    in.now=t;in.rx_time=t;
+    auto out=check(in);
+    require(out.advice==1&&std::abs(out.yaw_limit_deg-.5)<1e-9&&std::abs(out.pitch_limit_deg-.2)<1e-9,
+        "3 m range uses configured separate yaw and pitch limits");
+    auto x=in;x.distance=6;out=check(x);
+    require(out.yaw_limit_deg<.251&&out.pitch_limit_deg<.101,"farther slant range tightens angular gates");
+    x=in;x.distance=1;require(std::abs(check(x).yaw_limit_deg-.5)<1e-9,"near range never loosens arrival gate");
+    x=in;x.rx_yaw=20.6;require(check(x).advice==0,"yaw outside tolerance blocks fire");
+    x=in;x.rx_pitch=10.3;require(check(x).advice==0,"pitch outside tolerance blocks fire");
+    x=in;x.desired_yaw=x.sent_yaw=179.9;x.rx_yaw=-179.9;
+    require(check(x).advice==1,"arrival compares yaw across plus/minus 180 degrees");
+    x=in;x.sent_yaw=18;require(check(x).reason==Reason::Slewing,"slew-limited intermediate target cannot allow fire");
+    x=in;x.rx_time=t-51ms;require(check(x).advice==0,"stale RX stops fire even while vision is fresh");
+    x=in;x.rx_time={};require(check(x).advice==0,"missing RX never allows fire");
+    x=in;x.rx_time=t+1ms;require(check(x).advice==0,"future RX timestamp cannot allow fire");
+    x=in;x.rx_yaw=NAN;require(check(x).advice==0,"NaN RX cannot allow fire");
+    x=in;x.desired_pitch=x.sent_pitch=x.rx_pitch=44;
+    require(check(x).reason==Reason::PitchLimited,"out-of-travel pitch cannot allow fire");
+    x=in;x.eligible=false;require(check(x).advice==0,"rejected/lost/reset observations cannot fire");
+    x=in;x.distance=0;require(check(x).advice==0,"zero distance cannot fire");
+    x=in;x.requested=3;require(check(x).advice==0,"obsolete internal code 3 cannot escape arrival gate");
+    Gate pulse(immediate);x=in;x.aim_mode=4;x.requested=0;
+    require(pulse.evaluate(x).advice==0,"center alignment can be maintained outside phase window");
+    x.requested=2;x.single_shot_id=1;
+    require(pulse.evaluate(x).advice==2,"fresh center event emits a single-shot code 2");
+    int repeats=0;for(int i=0;i<20;++i){x.now+=5ms;x.rx_time=x.now;repeats+=pulse.evaluate(x).advice==2;}
+    require(repeats==0,"200 Hz repeats of the same shot event cannot refire");
+    x.single_shot_id=2;require(pulse.evaluate(x).advice==2,"new center event can fire again");
+    x.single_shot_id=3;x.rx_yaw=22;
+    require(pulse.evaluate(x).advice==0,"misaligned center event is dropped");
+    x.rx_yaw=20;require(pulse.evaluate(x).advice==0,"blocked event is never queued for late firing");
+    x.single_shot_id=0;require(pulse.evaluate(x).advice==0,"single shot requires an explicit event ID");
+    Gate context(Config{});x=in;context.evaluate(x);x.now+=40ms;x.rx_time=x.now;
+    require(context.evaluate(x).advice==1,"arrival context becomes ready");
+    x.aim_mode=4;require(context.evaluate(x).advice==0,"strategy changes restart arrival dwell");
+    Config bad=immediate;bad.valid=false;Gate invalid(bad);
+    require(invalid.evaluate(in).advice==0,"invalid configuration fails closed");
+    setenv("AUTOAIM_FIRE_YAW_TOL_DEG","nan",1);
+    require(!Config::from_environment().valid,"non-finite tuning is rejected");
+    unsetenv("AUTOAIM_FIRE_YAW_TOL_DEG");
+}
 void policy_checks() {
     using C=hero_log::Clock;
     const auto t=C::now();
@@ -104,7 +163,12 @@ void planner_checks(const std::string& root,const std::string& config) {
     target.armor_x_measurement<<0;target.armor_y_measurement<<3;target.armor_z_measurement<<.3;
     target.armor_x_state<<0,0;target.armor_y_state<<3,0;target.armor_z_state<<.3,0;
     auto plan=planner.make_plan(target,10,0,0,Attitude().R_world2imu(),std::chrono::high_resolution_clock::now());
+    require(plan.fire_enable==0,"initial detection does not request continuous fire");
     const auto observed_yaw=plan.target_yaw,observed_pitch=plan.target_pitch;
+    target.predictor_state=TrackingState::TRACKING;
+    plan=planner.make_plan(target,10,0,0,Attitude().R_world2imu(),std::chrono::high_resolution_clock::now());
+    require(plan.aimed_target_type==AimedTargetType::ARMOR_WITH_ARMOR_MODEL&&plan.fire_enable==1,
+        "stable single-armor prediction requests continuous fire before arrival gate");
     target.predictor_state=TrackingState::TEMP_LOST;target.armor_y_state(1)=100;
     plan=planner.make_plan(target,10,0,0,Attitude().R_world2imu(),std::chrono::high_resolution_clock::now());
     require(plan.aimed_target_type!=AimedTargetType::NONE&&plan.target_yaw==observed_yaw&&plan.target_pitch==observed_pitch,"TEMP_LOST holds last angles");
@@ -119,6 +183,19 @@ void planner_checks(const std::string& root,const std::string& config) {
     target.predictor_state=TrackingState::TRACKING;target.armor_y_state(1)=-100;
     plan=planner.make_plan(target,10,0,0,Attitude().R_world2imu(),std::chrono::high_resolution_clock::now());
     require(plan.prediction_rejected&&std::abs(plan.target_distance-std::hypot(3.,.3))<1e-9,"gross predicted range falls back to observation");
+    target.armor_y_state(1)=0;target.yaw_state(1)=8;target.vehicle_model_trust=true;
+    target.tracked_state<<3.26,0,0,0,.3,0,-8*.23,8,.26,0,0;
+    std::this_thread::sleep_for(210ms);
+    target.last_observation_update_time=std::chrono::steady_clock::now();
+    plan=planner.make_plan(target,10,0,0,Attitude().R_world2imu(),std::chrono::high_resolution_clock::now());
+    require(plan.aimed_target_type==AimedTargetType::VEHICLE_CENTER_WITH_VEHICLE_MODEL&&plan.fire_enable==2,
+        "trusted center model inside phase window requests code 2");
+    plan=planner.make_plan(target,10,0,0,Attitude().R_world2imu(),std::chrono::high_resolution_clock::now());
+    require(plan.fire_enable==0,"center phase window cannot bypass 200 ms shot interval");
+    target.tracked_state(6)+=.2;std::this_thread::sleep_for(210ms);
+    target.last_observation_update_time=std::chrono::steady_clock::now();
+    plan=planner.make_plan(target,10,0,0,Attitude().R_world2imu(),std::chrono::high_resolution_clock::now());
+    require(plan.fire_enable==0,"center phase outside window cannot request a shot after cooldown");
 }
 
 void pipeline_delay_checks(const std::string& config) {
@@ -165,20 +242,34 @@ void pipeline_delay_checks(const std::string& config) {
 }
 
 struct FakeDriver:SerialInterface {
-    struct Packet {std::chrono::steady_clock::time_point stamp;float yaw,pitch,distance;uint8_t id;};
+    struct Packet {std::chrono::steady_clock::time_point stamp;float yaw,pitch,distance;uint8_t id,fire;};
     AttitudeCallback attitude;RobotStatusCallback status;
     std::mutex mutex;std::condition_variable changed;std::vector<Packet> packets;
     bool init()override{return true;}void close()override{}
     void start()override{if(attitude)attitude(Attitude(20,10,0));}
     void set_attitude_callback(AttitudeCallback a)override{attitude=std::move(a);}
     void set_robot_status_callback(RobotStatusCallback s)override{status=std::move(s);}
-    void transmit_cmd(float y,float,float p,float,float,float,float d,uint8_t,uint8_t id)override {
+    void transmit_cmd(float y,float,float p,float,float,float,float d,uint8_t fire,uint8_t id)override {
         std::lock_guard<std::mutex> lock(mutex);
-        packets.push_back({std::chrono::steady_clock::now(),y,p,d,id});changed.notify_all();
+        packets.push_back({std::chrono::steady_clock::now(),y,p,d,id,fire});changed.notify_all();
     }
     bool wait_for(float yaw,uint8_t id) {
         std::unique_lock<std::mutex> lock(mutex);
         return changed.wait_for(lock,300ms,[&]{return !packets.empty()&&packets.back().id==id&&std::abs(packets.back().yaw-yaw)<.01;});
+    }
+    bool wait_fire(uint8_t fire) {
+        std::unique_lock<std::mutex> lock(mutex);
+        return changed.wait_for(lock,300ms,[&]{return !packets.empty()&&packets.back().id==2&&packets.back().fire==fire;});
+    }
+    int single_count() {
+        std::lock_guard<std::mutex> lock(mutex);
+        int n=0;for(const auto&p:packets)n+=p.fire==2;return n;
+    }
+    bool wait_single_count(int expected) {
+        std::unique_lock<std::mutex> lock(mutex);
+        return changed.wait_for(lock,300ms,[&]{
+            int n=0;for(const auto&p:packets)n+=p.fire==2;return n>=expected;
+        });
     }
 };
 void serial_checks() {
@@ -211,6 +302,33 @@ void serial_checks() {
     require(driver->wait_for(25,2),"fresh observation recovers after timeout");
     msg.command_array[0].yaw_angle=NAN;planner.send(msg);
     require(driver->wait_for(20,0),"NaN command cancels target");
+
+    for(auto&c:msg.command_array){c=RobotCommand{};c.distance=3;c.target_id=2;}
+    msg.aim_mode=AimedTargetType::VEHICLE_CENTER_WITH_VEHICLE_MODEL;
+    msg.fire_control_eligible=true;msg.observation_deadline=std::chrono::steady_clock::now()+200ms;
+    planner.send(msg);
+    for(int i=0;i<14;++i){driver->attitude(Attitude(20,10,0));std::this_thread::sleep_for(5ms);}
+    for(auto&c:msg.command_array)c.fire_enable=2;
+    msg.single_shot_id=1;planner.send(msg);
+    require(driver->wait_single_count(1),"serial emits code 2 after live arrival and a center request");
+    require(driver->wait_fire(0),"single shot returns to zero on the next serial cycle");
+    planner.send(msg);std::this_thread::sleep_for(15ms);
+    require(driver->single_count()==1,"interpolation and duplicate messages cannot repeat a shot ID");
+    driver->attitude(Attitude(20,10,0));msg.single_shot_id=2;planner.send(msg);
+    require(driver->wait_single_count(2),"serial accepts a distinct single-shot event");
+    require(driver->wait_fire(0),"second single-shot event also returns to zero");
+    for(auto&c:msg.command_array)c.fire_enable=1;
+    msg.single_shot_id=0;msg.aim_mode=AimedTargetType::ARMOR_WITH_ARMOR_MODEL;
+    msg.observation_deadline=std::chrono::steady_clock::now()+200ms;planner.send(msg);
+    for(int i=0;i<14;++i){driver->attitude(Attitude(20,10,0));std::this_thread::sleep_for(5ms);}
+    require(driver->wait_fire(1),"serial continuous fire requires live arrival");
+    driver->attitude(Attitude(22,10,0));
+    require(driver->wait_fire(0),"serial immediately stops continuous fire when actual yaw drifts");
+    for(int i=0;i<14;++i){driver->attitude(Attitude(20,10,0));std::this_thread::sleep_for(5ms);}
+    require(driver->wait_fire(1),"serial resumes only after arrival dwell recovers");
+    msg.observation_deadline=std::chrono::steady_clock::now()+200ms;planner.send(msg);
+    std::this_thread::sleep_for(60ms);
+    require(driver->wait_fire(0),"RX timeout stops continuous fire without waiting for vision timeout");
 }
 
 void logging_checks() {
@@ -247,13 +365,26 @@ void logging_checks() {
         clamped_no_fire=bytes.size()==31&&bytes[21]==0;
     }
     require(clamped_no_fire,"mechanically clamped pitch suppresses fire advice on wire");
+    for(unsigned request: {0U,1U,2U,3U}) {
+        const float requested_yaw=40+request;
+        driver.transmit_cmd(requested_yaw,0,10,0,0,0,3,request,2);
+        input.close();input.open(path);bool matched=false;
+        while(std::getline(input,line)) {
+            if(line.find("yaw="+std::to_string(int(requested_yaw))+".000")==std::string::npos)continue;
+            auto pos=line.find(" raw=");if(pos==std::string::npos)continue;
+            std::istringstream hex(line.substr(pos+5));unsigned value;std::vector<unsigned> bytes;
+            while(hex>>std::hex>>value)bytes.push_back(value);
+            matched=bytes.size()==31&&bytes[21]==(request<=2?request:0);
+        }
+        require(matched,"driver serializes 0/1/2 explicitly and rejects obsolete code 3");
+    }
     unsetenv("AUTOAIM_TRACK_ONLY");
     unsetenv("AUTOAIM_XUC_LOG_RAW");
     std::cout<<"Driver log: "<<count<<" rows for 201 packets before raw opt-in\n";
 }
 int main(int argc,char**argv) {
     try {
-        policy_checks();tracker_checks();fast_translation_checks();planner_checks(argv[1],argv[2]);
+        fire_gate_checks();policy_checks();tracker_checks();fast_translation_checks();planner_checks(argv[1],argv[2]);
         pipeline_delay_checks(argv[2]);serial_checks();logging_checks();
         mathutils::CoordTransformer::Destroy();
         std::cout<<"PASS "<<checks<<" lifecycle, timing and logging checks; no camera/UART opened\n";

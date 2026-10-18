@@ -11,6 +11,7 @@
  * 4. 异常检测和恢复机制
  */
 
+#include "gui_control.hpp"
 #include "Tracker.hpp"
 
 namespace predict 
@@ -918,27 +919,27 @@ namespace predict
     void Tracker::parameter_adjustor_init()
     {
         // 为参数调整创建窗口
-        cv::namedWindow("predictor trackbar", cv::WINDOW_AUTOSIZE);
+        autoaim_gui::namedWindow("predictor trackbar", cv::WINDOW_AUTOSIZE);
 
         // 过程噪声参数调整滑动条
-        cv::createTrackbar("p_coord_mant", "predictor trackbar", &p_coord_mant, 99, 0);
-        cv::createTrackbar("p_coord_exp", "predictor trackbar", &p_coord_exp, 20, 0);
-        cv::createTrackbar("p_yaw_mant", "predictor trackbar", &p_yaw_mant, 99, 0);
-        cv::createTrackbar("p_yaw_exp", "predictor trackbar", &p_yaw_exp, 20, 0);
-        cv::createTrackbar("p_r_mant", "predictor trackbar", &p_r_mant, 99, 0);
-        cv::createTrackbar("p_r_exp", "predictor trackbar", &p_r_exp, 20, 0);
+        autoaim_gui::createTrackbar("p_coord_mant", "predictor trackbar", &p_coord_mant, 99, 0);
+        autoaim_gui::createTrackbar("p_coord_exp", "predictor trackbar", &p_coord_exp, 20, 0);
+        autoaim_gui::createTrackbar("p_yaw_mant", "predictor trackbar", &p_yaw_mant, 99, 0);
+        autoaim_gui::createTrackbar("p_yaw_exp", "predictor trackbar", &p_yaw_exp, 20, 0);
+        autoaim_gui::createTrackbar("p_r_mant", "predictor trackbar", &p_r_mant, 99, 0);
+        autoaim_gui::createTrackbar("p_r_exp", "predictor trackbar", &p_r_exp, 20, 0);
 
         // === 观测噪声参数滑动条 (物理单位：角度-度、距离-%) ===
-        cv::createTrackbar("Azimuth_Deg_Int", "predictor trackbar", &azi_angle_deg_int, 50, 0);
-        cv::createTrackbar("Azimuth_Deg_Frac", "predictor trackbar", &azi_angle_deg_frac, 9, 0);
+        autoaim_gui::createTrackbar("Azimuth_Deg_Int", "predictor trackbar", &azi_angle_deg_int, 50, 0);
+        autoaim_gui::createTrackbar("Azimuth_Deg_Frac", "predictor trackbar", &azi_angle_deg_frac, 9, 0);
 
-        cv::createTrackbar("Pitch_Deg_Int", "predictor trackbar", &ele_angle_deg_int, 50, 0);
-        cv::createTrackbar("Pitch_Deg_Frac", "predictor trackbar", &ele_angle_deg_frac, 9, 0);
+        autoaim_gui::createTrackbar("Pitch_Deg_Int", "predictor trackbar", &ele_angle_deg_int, 50, 0);
+        autoaim_gui::createTrackbar("Pitch_Deg_Frac", "predictor trackbar", &ele_angle_deg_frac, 9, 0);
 
-        cv::createTrackbar("Distance_Coeff_%", "predictor trackbar", &dist_coeff_percent, 100, 0);
+        autoaim_gui::createTrackbar("Distance_Coeff_%", "predictor trackbar", &dist_coeff_percent, 100, 0);
 
-        cv::createTrackbar("TargetYaw_Deg_Int", "predictor trackbar", &tgt_yaw_deg_int, 50, 0);
-        cv::createTrackbar("TargetYaw_Deg_Frac", "predictor trackbar", &tgt_yaw_deg_frac, 9, 0);
+        autoaim_gui::createTrackbar("TargetYaw_Deg_Int", "predictor trackbar", &tgt_yaw_deg_int, 50, 0);
+        autoaim_gui::createTrackbar("TargetYaw_Deg_Frac", "predictor trackbar", &tgt_yaw_deg_frac, 9, 0);
 
         // 装甲板模型KF参数调整滑动条
         // cv::createTrackbar("kf_yaw_mant", "predictor trackbar", &kf_yaw_mant, 99, 0);

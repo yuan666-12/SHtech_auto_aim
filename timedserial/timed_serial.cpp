@@ -24,6 +24,10 @@ namespace hardware
           status_bridge_(status_bridge)
     {
         LOGM_S("[TimedSerial] constructing with injected driver");
+        const auto& fire = fire_gate_.config();
+        LOGM_S("[FireControl] yaw_tol=%.3f deg pitch_tol=%.3f deg ref=%.2f m settle=%.1f ms rx_max_age=%.1f ms valid=%d",
+            fire.yaw_tolerance_deg, fire.pitch_tolerance_deg, fire.reference_distance_m,
+            fire.settle_ms, fire.rx_max_age_ms, fire.valid);
 
         // 注册为 Planner 消息接收者
         planner_bridge_.set_receiver([this](const pipeline::bridge::PlannerToSerialMessage &msg) {
@@ -93,6 +97,9 @@ namespace hardware
         command_start_time_ = std::chrono::steady_clock::now();
         attitude_at_last_frame_ = pose;
         observation_deadline_ = msg.observation_deadline;
+        fire_control_eligible_ = valid && msg.fire_control_eligible;
+        fire_aim_mode_ = msg.aim_mode;
+        single_shot_id_ = msg.single_shot_id;
         plan_period_ = valid ? msg.plan_period : std::chrono::microseconds{2000};
         command_array_ = valid ? msg.command_array : command_array_t{};
         if (!valid) {
@@ -184,6 +191,9 @@ namespace hardware
     bool TimedSerial::read_latest_command_and_attitude()
     {
         std::lock_guard<std::mutex> lock(command_mutex_);
+        fire_eligible_cache_ = fire_control_eligible_;
+        fire_aim_mode_cache_ = fire_aim_mode_;
+        single_shot_id_cache_ = single_shot_id_;
         if (plan_period_.count() <= 0) return false;
         if (command_array_.front().target_id != 0 &&
             (observation_deadline_ == std::chrono::steady_clock::time_point{} ||
@@ -191,6 +201,7 @@ namespace hardware
             command_cache_ = RobotCommand{};
             command_array_ = command_array_t{};
             have_fresh_command_ = false;
+            fire_eligible_cache_ = false;
             plan_period_ = std::chrono::microseconds{0};
             return true;
         }
@@ -218,6 +229,7 @@ namespace hardware
         if (have_fresh_command_) {
             command_cache_ = RobotCommand{};
             have_fresh_command_ = false;
+            fire_eligible_cache_ = false;
             return true;
         }
         return false;
@@ -308,7 +320,28 @@ namespace hardware
                         pitch_target = current.pitch();
                         command_cache_ = RobotCommand{};
                     }
+                    const float desired_yaw = yaw_target, desired_pitch = pitch_target;
                     apply_tracking_slew_limit(yaw_target, pitch_target, target_valid);
+
+                    fire_control::Input fire_input;
+                    {
+                        std::lock_guard<std::mutex> lock(sensor_mutex_);
+                        fire_input.rx_yaw = latest_attitude_.yaw();
+                        fire_input.rx_pitch = latest_attitude_.pitch();
+                        fire_input.rx_time = latest_attitude_received_at_;
+                    }
+                    fire_input.now = std::chrono::steady_clock::now();
+                    fire_input.desired_yaw = desired_yaw;
+                    fire_input.desired_pitch = desired_pitch;
+                    fire_input.sent_yaw = yaw_target;
+                    fire_input.sent_pitch = pitch_target;
+                    fire_input.distance = command_cache_.distance;
+                    fire_input.target_id = command_cache_.target_id;
+                    fire_input.aim_mode = static_cast<int>(fire_aim_mode_cache_);
+                    fire_input.eligible = target_valid && fire_eligible_cache_;
+                    fire_input.requested = command_cache_.fire_enable;
+                    fire_input.single_shot_id = single_shot_id_cache_;
+                    const auto fire_decision = fire_gate_.evaluate(fire_input);
 
                     driver_->transmit_cmd(
                         yaw_target,
@@ -318,8 +351,32 @@ namespace hardware
                         command_cache_.yaw_acc,
                         command_cache_.pitch_acc,
                         command_cache_.distance,
-                        command_cache_.fire_enable,
+                        fire_decision.advice,
                         command_cache_.target_id);
+
+                    // UART write precedes diagnostics, as it does in the driver.
+                    const uint64_t fire_key = uint64_t(fire_decision.advice) |
+                        (uint64_t(fire_decision.reason) << 8) |
+                        (uint64_t(fire_input.aim_mode) << 16);
+                    const auto fire_report = fire_log_gate_.sample(
+                        fire_input.now, fire_key, hero_log::interval());
+                    if (fire_report.emit) {
+                        std::ostringstream line;
+                        line << "[FIRE_GATE] requested=" << fire_input.requested
+                             << " advice=" << unsigned(fire_decision.advice)
+                             << " reason=" << fire_control::name(fire_decision.reason)
+                             << " aim_mode=" << fire_input.aim_mode
+                             << " single_shot_id=" << fire_input.single_shot_id
+                             << " yaw_error_deg=" << fire_decision.yaw_error_deg
+                             << " pitch_error_deg=" << fire_decision.pitch_error_deg
+                             << " yaw_limit_deg=" << fire_decision.yaw_limit_deg
+                             << " pitch_limit_deg=" << fire_decision.pitch_limit_deg
+                             << " rx_age_ms=" << fire_decision.rx_age_ms
+                             << " settled_ms=" << fire_decision.settled_ms
+                             << " eligible=" << fire_input.eligible
+                             << " event=" << fire_report.event;
+                        hero_log::append(line.str(), fire_report.event);
+                    }
 
                     if (config_.debug.log_text)
                     {
@@ -334,7 +391,7 @@ namespace hardware
                                latest_robot_status_.enemy_color==EnemyColor::BLUE,
                                command_cache_.target_id,
                                latest_robot_status_.program_mode==ProgramMode::AUTO_AIM,
-                               command_cache_.fire_enable);
+                               fire_decision.advice);
                     }
                 }
                 else

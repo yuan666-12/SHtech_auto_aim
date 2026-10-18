@@ -172,6 +172,10 @@ struct PlannerToSerialMessage {
     Attitude attitude;
     std::chrono::microseconds plan_period;
     std::chrono::steady_clock::time_point observation_deadline{};
+    bool fire_control_eligible = false;
+    AimedTargetType aim_mode = AimedTargetType::NONE;
+    // One ID per new planner shot event; unchanged across all interpolated TXs.
+    uint64_t single_shot_id = 0;
 };
 
 /**

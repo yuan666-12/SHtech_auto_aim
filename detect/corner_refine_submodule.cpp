@@ -3,6 +3,7 @@
 // Moves armor corner refinement out of DetectSubModule
 //
 
+#include "gui_control.hpp"
 #include "corner_refine_submodule.hpp"
 
 namespace detect
@@ -13,8 +14,8 @@ namespace detect
           corner_optimizer(config.adjust_threshold)
     {
         if (config_.adjust_threshold) {
-            cv::namedWindow("detector trackbar", cv::WINDOW_AUTOSIZE);
-            cv::createTrackbar(
+            autoaim_gui::namedWindow("detector trackbar", cv::WINDOW_AUTOSIZE);
+            autoaim_gui::createTrackbar(
                 "Binary Threshold",
                 "detector trackbar",
                 &binary_thres,
@@ -124,14 +125,14 @@ namespace detect
                 dir_created = true;
             }
 
-            int key = cv::waitKey(1);
+            int key = autoaim_gui::waitKey(1);
             if (key == 'p' || key == 'P') {
                 std::string filename = output_dir + "corner_refine_" + std::to_string(data->index) + ".png";
                 cv::imwrite(filename, im2show);
             }
 
-            cv::imshow("corner_refine_submodule", im2show);
-            cv::waitKey(1);
+            autoaim_gui::imshow("corner_refine_submodule", im2show);
+            autoaim_gui::waitKey(1);
         }
 
         auto t_opt_end = std::chrono::steady_clock::now();

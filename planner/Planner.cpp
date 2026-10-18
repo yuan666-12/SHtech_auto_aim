@@ -189,7 +189,7 @@ namespace predict
             plan.target_pitch_acc = 0;
 
             plan.target_distance = distance_3D(plan.aimed_armor_pos);
-            plan.fire_enable = 2;
+            plan.fire_enable = 0;
 
             if (debug)
                 std::cout << "[predictor] target: armor with no model" << std::endl;
@@ -234,7 +234,7 @@ namespace predict
             plan.target_pitch_acc = 0;
 
             plan.target_distance = distance_3D(plan.aimed_armor_pos);
-            plan.fire_enable = 2;
+            plan.fire_enable = 1;
 
             if (debug)
                 std::cout << "[predictor] target: armor with armor model" << std::endl;
@@ -491,7 +491,7 @@ namespace predict
                     if (vx_constant_counter > 20) {
                         if (duration_cast<microseconds>(std::chrono::high_resolution_clock::now() - fire_enable_tp).count() / 1e6 > shoot_interval) {
                             if (aimed_armor_index != -1){
-                                plan.fire_enable = 3;
+                                plan.fire_enable = 2;
                                 fire_enable_tp = std::chrono::high_resolution_clock::now();
                             }
                             else {
@@ -514,7 +514,7 @@ namespace predict
             #else
                 if (duration_cast<microseconds>(std::chrono::high_resolution_clock::now() - fire_enable_tp).count() / 1e6 > shoot_interval) {
                     if (aimed_armor_index != -1){
-                        plan.fire_enable = 3;
+                        plan.fire_enable = 2;
                         fire_enable_tp = std::chrono::high_resolution_clock::now();
                     }
                     else {

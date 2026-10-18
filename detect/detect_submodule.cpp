@@ -3,6 +3,7 @@
 // Wraps original Detect logic as SubModule
 //
 
+#include "gui_control.hpp"
 #include "detect_submodule.hpp"
 #include "chrono"
 #include <iostream>
@@ -113,14 +114,14 @@ namespace detect
                 dir_created = true;
             }
 
-            int key = cv::waitKey(1);
+            int key = autoaim_gui::waitKey(1);
             if (key == 'p' || key == 'P') {
                 std::string filename = output_dir + "frame_" + std::to_string(frame_counter++) + ".png";
                 cv::imwrite(filename, im2show);
             }
 
-            cv::imshow("detect_submodule", im2show);
-            cv::waitKey(1);
+            autoaim_gui::imshow("detect_submodule", im2show);
+            autoaim_gui::waitKey(1);
         }
 
         if (config_.debug.log_text)

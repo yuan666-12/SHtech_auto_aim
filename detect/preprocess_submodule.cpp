@@ -3,6 +3,7 @@
 // Splits common detector image preprocessing out of DetectSubModule
 //
 
+#include "gui_control.hpp"
 #include "preprocess_submodule.hpp"
 
 namespace detect
@@ -36,8 +37,8 @@ namespace detect
 
         if (config_.debug.show_image)
         {
-            cv::imshow("detect_preprocess", data->detect_input);
-            cv::waitKey(1);
+            autoaim_gui::imshow("detect_preprocess", data->detect_input);
+            autoaim_gui::waitKey(1);
         }
 
         if (config_.debug.log_text)

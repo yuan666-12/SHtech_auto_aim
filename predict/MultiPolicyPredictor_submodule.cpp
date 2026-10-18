@@ -11,6 +11,7 @@
  * 4. 机器人控制指令生成
  */
 
+#include "gui_control.hpp"
 #include "MultiPolicyPredictor_submodule.hpp"
 #include <cstdlib>
 #include "armor_policy.hpp"
@@ -42,9 +43,9 @@ namespace predict
         }
 
         if (config_.adjust_mode) {
-            cv::namedWindow("predictor trackbar", cv::WINDOW_AUTOSIZE);
+            autoaim_gui::namedWindow("predictor trackbar", cv::WINDOW_AUTOSIZE);
         
-            cv::createTrackbar("in_autoaim_mode", "predictor trackbar", &in_autoaim_mode_adjust, 1, 0);
+            autoaim_gui::createTrackbar("in_autoaim_mode", "predictor trackbar", &in_autoaim_mode_adjust, 1, 0);
         }
 
         LOGM_S("[MultiPolicyPredictorSubModule] ignore armor id: %s (enemy color retained)",

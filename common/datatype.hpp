@@ -132,7 +132,7 @@ struct RobotCommand
     float pitch_angle = 0.0f;
     float pitch_speed = 0.0f;
     float pitch_acc = 0.0f;
-    int fire_enable = 0; // 0 is disable, 1 is enable, 2 is self-determined, 3 is single shoot
+    int fire_enable = 0; // 0 stop, 1 continuous fire, 2 single-shot request.
     int target_id = 0; // 1-7: robot, 8: outpost, 9: base, 0: none
 };
 
@@ -302,7 +302,7 @@ struct Plan
     /// @brief 目标俯仰角速度 (弧度/秒2)，云台俯仰轴应达到的角加速度
     double target_pitch_acc = 0.0;
 
-    /// @brief 射击使能标志 (0=禁止, 1=允许, 2=下位机决策)
+    /// @brief Fire request: 0 stop, 1 continuous, 2 single shot (arrival gate still applies).
     int fire_enable = 0;
 
     /// @brief 目标距离 (米)，目标的直线距离
