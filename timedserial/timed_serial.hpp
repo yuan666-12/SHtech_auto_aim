@@ -62,6 +62,8 @@ namespace hardware
 
     private:
         TimedSerialConfig config_;
+        hero_log::RateGate status_log_gate_, transmit_log_gate_, idle_log_gate_;
+        hero_log::RateGate cost_log_gate_, overrun_log_gate_;
         /**
          * @brief   读取最新命令和姿态数据，基于时间戳进行线性插值
          * @return  bool 成功返回true，命令数组耗尽返回false
@@ -123,7 +125,9 @@ namespace hardware
         AimedTargetType fire_aim_mode_cache_ = AimedTargetType::NONE;
         uint64_t single_shot_id_ = 0, single_shot_id_cache_ = 0;
         fire_control::Gate fire_gate_;
-        hero_log::RateGate fire_log_gate_;
+        center_fire::Snapshot center_window_, center_window_cache_;
+        std::chrono::steady_clock::time_point shot_hold_until_{};
+        float shot_hold_yaw_=0, shot_hold_pitch_=0;
         // Keep the latest valid command on the wire between visual frames.
         // The STM32 intentionally drops tracking after 100 ms without a
         // valid packet, while detector/planner frames can take longer.

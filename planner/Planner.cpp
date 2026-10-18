@@ -57,6 +57,8 @@ namespace predict
         fin["planner"]["disable_vehicle_center_shoot_mode"] >> disable_vehicle_center_shoot_mode;
         fin["planner"]["disable_armor_with_vehicle_shoot_mode"] >> disable_armor_with_vehicle_shoot_mode;
         fin["planner"]["consider_air_resistence"] >> consider_air_resistence;
+        if (!fin["planner"]["force_center_preaim"].empty())
+            fin["planner"]["force_center_preaim"] >> force_center_preaim;
         if (!fin["planner"]["geometry_only"].empty())
             fin["planner"]["geometry_only"] >> geometry_only;
         if (geometry_only) {
@@ -129,6 +131,7 @@ namespace predict
     const Plan& Planner::make_plan(const Target &target, const float bullet_speed,
         const double attitude_yaw, const double attitude_pitch, const Eigen::Matrix3d &R_world2imu, const TP &tp)
     {
+        plan.center_window = {};
         try {
         const auto updated_at = target.last_observation_update_time;
         const double observation_age = updated_at == std::chrono::steady_clock::time_point{} ? INFINITY :
@@ -465,66 +468,25 @@ namespace predict
 
             plan.target_distance = distance_3D(plan.aimed_armor_pos);
 
-            // === 射击决策 ===
-            // 根据预测装甲板偏航角是否处于发射窗口判断是否发射
-            double predicted_yaw = target.tracked_state(6, 0) + target.tracked_state(7, 0) * (total_delay - comm_latency + single_shoot_latency);
-            int aimed_armor_index = -1;
-            for (int i = 0; i != 4; i++) {
-                double predicted_armor_yaw = predicted_yaw + i * 1.57;
-
-                predicted_armor_yaw = mathutils::limit_rad(predicted_armor_yaw);
-
-                if (predicted_armor_yaw > M_PI_2) predicted_armor_yaw -= M_PI;
-                if (predicted_armor_yaw <= -M_PI_2) predicted_armor_yaw += M_PI;
-
-                if (abs(aimed_direction - predicted_armor_yaw) < fire_threshold) {
-                    aimed_armor_index = i;
-                    break;
-                }
-
-            }
-
-            #if ASSESSMENT_CRITERIA
-                if (abs(target.tracked_state(3, 0)) > 0.9) {
-                    vx_constant_counter++;
-
-                    if (vx_constant_counter > 20) {
-                        if (duration_cast<microseconds>(std::chrono::high_resolution_clock::now() - fire_enable_tp).count() / 1e6 > shoot_interval) {
-                            if (aimed_armor_index != -1){
-                                plan.fire_enable = 2;
-                                fire_enable_tp = std::chrono::high_resolution_clock::now();
-                            }
-                            else {
-                                plan.fire_enable = 0;
-                            }
-                        }
-                        else {
-                            plan.fire_enable = 0;
-                        }
-                    }
-                    else {
-                        plan.fire_enable = 0;
-                    }
-                    
-                }
-                else {
-                    plan.fire_enable = 0;
-                    vx_constant_counter = 0;
-                }
-            #else
-                if (duration_cast<microseconds>(std::chrono::high_resolution_clock::now() - fire_enable_tp).count() / 1e6 > shoot_interval) {
-                    if (aimed_armor_index != -1){
-                        plan.fire_enable = 2;
-                        fire_enable_tp = std::chrono::high_resolution_clock::now();
-                    }
-                    else {
-                        plan.fire_enable = 0;
-                    }
-                }
-                else {
-                    plan.fire_enable = 0;
-                }
-            #endif
+            // Publish a model at its image timestamp. TX checks the actual
+            // RX direction every 5 ms; this is permission to evaluate, not a pulse.
+            const auto now = std::chrono::steady_clock::now();
+            const double image_age = std::chrono::duration<double>(
+                std::chrono::high_resolution_clock::now()-target.last_observation_time).count();
+            auto& window=plan.center_window;
+            std::copy(target.tracked_state.data(),target.tracked_state.data()+11,window.state.begin());
+            window.state_time=now-std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                std::chrono::duration<double>(image_age));
+            window.bullet_speed=bullet_speed;
+            window.release_delay_s=single_shoot_latency;
+            window.shot_interval_s=shoot_interval;
+            window.yaw_comp_rad=yaw_comp;window.pitch_comp_rad=pitch_comp;
+            window.air_resistance=consider_air_resistence;
+            window.valid=!geometry_only && target.vehicle_model_trust && target.observation_updated &&
+                !target.measurement_rejected && !target.filter_reset &&
+                target.last_observation_time!=Target{}.last_observation_time;
+            window.valid=center_fire::valid(window,now);
+            plan.fire_enable=window.valid ? 2 : 0;
 
             if (debug)
                 std::cout << "[predictor] target: vehicle center with vehicle model" << std::endl;
@@ -560,6 +522,9 @@ namespace predict
              !std::isfinite(plan.target_yaw_speed) || !std::isfinite(plan.target_pitch_speed))) {
             throw std::runtime_error("non-finite planning result");
         }
+        if (force_center_preaim && plan.aimed_target_type !=
+            AimedTargetType::VEHICLE_CENTER_WITH_VEHICLE_MODEL)
+            plan.fire_enable = 0; // Untrusted/single-armor fallback only tracks.
         return plan;
         } catch (const std::exception &error) {
             static auto last_report = std::chrono::steady_clock::time_point{};
@@ -840,7 +805,18 @@ namespace predict
      */
     void Planner::update_aimed_target_type(const Target &target, double rotation_speed)
     {
-        // 根据旋转速度选择不同的云台目标模型
+        if (force_center_preaim) {
+            if (target.predictor_state == TrackingState::TRACKING)
+                plan.aimed_target_type = target.vehicle_model_trust ?
+                    AimedTargetType::VEHICLE_CENTER_WITH_VEHICLE_MODEL :
+                    AimedTargetType::ARMOR_WITH_ARMOR_MODEL;
+            else if (target.predictor_state == TrackingState::DETECTING)
+                plan.aimed_target_type = AimedTargetType::ARMOR_WITH_NO_MODEL;
+            else if (target.predictor_state != TrackingState::TEMP_LOST)
+                plan.aimed_target_type = AimedTargetType::NONE;
+            return;
+        }
+        // Legacy automatic selection, used only when force_center_preaim=0.
         if (target.predictor_state == TrackingState::TRACKING) {
             if (plan.aimed_target_type == AimedTargetType::NONE || plan.aimed_target_type == AimedTargetType::ARMOR_WITH_NO_MODEL) {
                 // 从无目标或无模型状态转换

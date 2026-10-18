@@ -10,6 +10,7 @@
 
 
 // packages
+#include "center_fire_control.hpp"
 #include <cstdint>
 #include <array>
 #include <chrono>
@@ -302,12 +303,13 @@ struct Plan
     /// @brief 目标俯仰角速度 (弧度/秒2)，云台俯仰轴应达到的角加速度
     double target_pitch_acc = 0.0;
 
-    /// @brief Fire request: 0 stop, 1 continuous, 2 single shot (arrival gate still applies).
+    /// @brief Fire request: 0 stop, 1 continuous, 2 single shot (the mode-specific fire gate still applies).
     int fire_enable = 0;
 
     /// @brief 目标距离 (米)，目标的直线距离
     double target_distance = 0.0;
     bool prediction_rejected = false;
+    center_fire::Snapshot center_window;
 };
 
 /**
@@ -447,6 +449,7 @@ struct ThreadDataPack
     Attitude attitude;          /*!< 上行位姿数据 */
     RobotCommand robotcommand;
     int index = 0;
+    double capture_ready_wait_ms = 0.0; // Wait BEFORE image acquisition, not image age.
     uint64_t camera_frame_number = 0, camera_device_timestamp = 0;
     int64_t camera_host_timestamp = 0;
     bool attitude_valid = false;

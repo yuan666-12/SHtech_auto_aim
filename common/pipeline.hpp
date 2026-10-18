@@ -230,6 +230,9 @@ namespace pipeline
          */
         HandshakePipeline(const int ignored_max) {}
 
+        // Producer permission must be obtained BEFORE acquiring a camera frame.
+        bool wait_for_consumer(BasicTask* employee = nullptr);
+
         /**
          * @brief   获取报文对象（消费者）
          * @details 等待生产者提交数据后取走数据并完成握手
@@ -252,6 +255,8 @@ namespace pipeline
                 }
                 if (!employee->isalive())
                 {
+                    ready_to_get = false;
+                    cv_put.notify_all();
                     return nullptr;
                 }
             }
@@ -497,6 +502,20 @@ namespace pipeline
         std::condition_variable state_cv;          /*!< 状态变更的条件变量 */
     };
     
+    template <typename T>
+    bool HandshakePipeline<T>::wait_for_consumer(BasicTask* employee)
+    {
+        std::unique_lock<std::mutex> lock(mtx);
+        const auto ready = [this]() { return ready_to_get && !data_ready; };
+        if (employee) {
+            while (!ready() && employee->isalive())
+                cv_put.wait_for(lock, std::chrono::milliseconds(20));
+            return employee->isalive() && ready();
+        }
+        cv_put.wait(lock, ready);
+        return true;
+    }
+
     /**
      * @brief   子模块基类
      * @details 提供与 BasicTask 类似的接口，但更轻量化，不管理线程
@@ -641,9 +660,18 @@ namespace pipeline
                 while (isalive())
                 {
                     // 从输入管道获取数据
+                    double capture_ready_wait_ms = 0.0;
+                    if constexpr (std::is_same<OutputPipe, AutoAimHandshake>::value) {
+                        const auto before_ready = std::chrono::steady_clock::now();
+                        if (!pipeafter.wait_for_consumer(this)) break;
+                        capture_ready_wait_ms = std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - before_ready).count();
+                    }
                     auto data = pipebefore.get(this);
                     if (!data)
                         break;
+                    if constexpr (std::is_same<OutputPipe, AutoAimHandshake>::value)
+                        data->capture_ready_wait_ms = capture_ready_wait_ms;
 
                     // 如果没有子模块，直接传递数据（透传模式）
                     if (submodules.empty())

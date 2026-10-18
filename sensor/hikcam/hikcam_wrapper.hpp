@@ -41,6 +41,8 @@ private:
     double exposure;
     double gain;
     void *cam_handle;
+    bool device_open_ = false;
+    bool grabbing_ = false;
     unsigned int dev_num;
     unsigned int fail_cnt;
 

@@ -100,6 +100,7 @@ namespace hardware
         fire_control_eligible_ = valid && msg.fire_control_eligible;
         fire_aim_mode_ = msg.aim_mode;
         single_shot_id_ = msg.single_shot_id;
+        center_window_ = valid ? msg.center_window : center_fire::Snapshot{};
         plan_period_ = valid ? msg.plan_period : std::chrono::microseconds{2000};
         command_array_ = valid ? msg.command_array : command_array_t{};
         if (!valid) {
@@ -155,31 +156,38 @@ namespace hardware
      */
     void TimedSerial::handle_status_update(const RobotStatus& sts)
     {
-        std::lock_guard<std::mutex> lock(sensor_mutex_);
-        
-        // 智能合并：如果新数据的射速来自IMU包，则更新；
-        // 否则保留已有值（避免被裁判系统包的默认值覆盖）
-        float current_speed = latest_robot_status_.robot_speed_mps;
-        ProgramMode current_program_mode = latest_robot_status_.program_mode;
+        RobotStatus snapshot{};
+        bool report = false;
+        {
+            std::lock_guard<std::mutex> lock(sensor_mutex_);
+            // 智能合并：如果新数据的射速来自IMU包，则更新；
+            // 否则保留已有值（避免被裁判系统包的默认值覆盖）
+            float current_speed = latest_robot_status_.robot_speed_mps;
+            ProgramMode current_program_mode = latest_robot_status_.program_mode;
 
-        constexpr float DEFAULT_SPEED = INF_BALL_SPEED;
-        if (sts.robot_speed_mps == DEFAULT_SPEED)
-        {
-            latest_robot_status_ = sts;
-            latest_robot_status_.robot_speed_mps = current_speed;
-            latest_robot_status_.program_mode = current_program_mode;
+            constexpr float DEFAULT_SPEED = INF_BALL_SPEED;
+            if (sts.robot_speed_mps == DEFAULT_SPEED)
+            {
+                latest_robot_status_ = sts;
+                latest_robot_status_.robot_speed_mps = current_speed;
+                latest_robot_status_.program_mode = current_program_mode;
+            }
+            else {
+                latest_robot_status_.robot_speed_mps = sts.robot_speed_mps;
+                latest_robot_status_.program_mode = sts.program_mode;
+                latest_robot_status_.enemy_color = sts.enemy_color;
+            }
+
+            snapshot = latest_robot_status_;
+            const uint64_t key = uint64_t(snapshot.enemy_color) |
+                (uint64_t(snapshot.program_mode) << 8);
+            report = config_.debug.log_text && status_log_gate_.sample(
+                hero_log::Clock::now(), key, std::chrono::milliseconds(1000)).emit;
         }
-        else {
-            latest_robot_status_.robot_speed_mps = sts.robot_speed_mps;
-            latest_robot_status_.program_mode = sts.program_mode;
-            latest_robot_status_.enemy_color = sts.enemy_color;
-        }
-        
-        if (config_.debug.log_text)
-        {
-            LOGM_S("[TimedSerial] Status updated: enemy_color=%d, speed=%.2f", 
-                   static_cast<int>(latest_robot_status_.enemy_color), 
-                   latest_robot_status_.robot_speed_mps);
+        // Console output must not hold the attitude/status mutex.
+        if (report) {
+            LOGM_S("[TimedSerial] Status updated: enemy_color=%d, speed=%.2f",
+                   static_cast<int>(snapshot.enemy_color), snapshot.robot_speed_mps);
         }
     }
 
@@ -194,6 +202,7 @@ namespace hardware
         fire_eligible_cache_ = fire_control_eligible_;
         fire_aim_mode_cache_ = fire_aim_mode_;
         single_shot_id_cache_ = single_shot_id_;
+        center_window_cache_ = center_window_;
         if (plan_period_.count() <= 0) return false;
         if (command_array_.front().target_id != 0 &&
             (observation_deadline_ == std::chrono::steady_clock::time_point{} ||
@@ -305,7 +314,8 @@ namespace hardware
                 {
                     auto read_time_cost = std::chrono::high_resolution_clock::now() - start_time;
                     if(config_.debug.log_text)
-                        if(read_time_cost > std::chrono::microseconds(500))
+                        if(read_time_cost > std::chrono::microseconds(500) && cost_log_gate_.sample(
+                            hero_log::Clock::now(), 0, std::chrono::milliseconds(1000)).emit)
                             LOGM_S("[timedserial] Cost time: %lld us", 
                                    (long long)std::chrono::duration_cast<std::chrono::microseconds>(read_time_cost).count());
                     
@@ -320,6 +330,8 @@ namespace hardware
                         pitch_target = current.pitch();
                         command_cache_ = RobotCommand{};
                     }
+                    const bool holding_shot = std::chrono::steady_clock::now() < shot_hold_until_;
+                    if (holding_shot) { yaw_target=shot_hold_yaw_;pitch_target=shot_hold_pitch_; }
                     const float desired_yaw = yaw_target, desired_pitch = pitch_target;
                     apply_tracking_slew_limit(yaw_target, pitch_target, target_valid);
 
@@ -341,7 +353,20 @@ namespace hardware
                     fire_input.eligible = target_valid && fire_eligible_cache_;
                     fire_input.requested = command_cache_.fire_enable;
                     fire_input.single_shot_id = single_shot_id_cache_;
+                    fire_input.center_window = center_window_cache_;
+                    if (holding_shot) fire_input.requested=0;
                     const auto fire_decision = fire_gate_.evaluate(fire_input);
+                    if (fire_decision.advice==2 && driver_->fire_actuation_enabled() &&
+                        fire_aim_mode_cache_==AimedTargetType::VEHICLE_CENTER_WITH_VEHICLE_MODEL) {
+                        // Keep the launch direction used by the window during trigger latency.
+                        shot_hold_yaw_=fire_input.rx_yaw;shot_hold_pitch_=fire_input.rx_pitch;
+                        shot_hold_until_=fire_input.now+
+                            std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                std::chrono::duration<double>(center_window_cache_.release_delay_s));
+                        yaw_target=shot_hold_yaw_;pitch_target=shot_hold_pitch_;
+                        filtered_yaw_deg_=yaw_target;filtered_pitch_deg_=pitch_target;
+                        filtered_target_initialized_=true;
+                    }
 
                     driver_->transmit_cmd(
                         yaw_target,
@@ -354,31 +379,12 @@ namespace hardware
                         fire_decision.advice,
                         command_cache_.target_id);
 
-                    // UART write precedes diagnostics, as it does in the driver.
-                    const uint64_t fire_key = uint64_t(fire_decision.advice) |
-                        (uint64_t(fire_decision.reason) << 8) |
-                        (uint64_t(fire_input.aim_mode) << 16);
-                    const auto fire_report = fire_log_gate_.sample(
-                        fire_input.now, fire_key, hero_log::interval());
-                    if (fire_report.emit) {
-                        std::ostringstream line;
-                        line << "[FIRE_GATE] requested=" << fire_input.requested
-                             << " advice=" << unsigned(fire_decision.advice)
-                             << " reason=" << fire_control::name(fire_decision.reason)
-                             << " aim_mode=" << fire_input.aim_mode
-                             << " single_shot_id=" << fire_input.single_shot_id
-                             << " yaw_error_deg=" << fire_decision.yaw_error_deg
-                             << " pitch_error_deg=" << fire_decision.pitch_error_deg
-                             << " yaw_limit_deg=" << fire_decision.yaw_limit_deg
-                             << " pitch_limit_deg=" << fire_decision.pitch_limit_deg
-                             << " rx_age_ms=" << fire_decision.rx_age_ms
-                             << " settled_ms=" << fire_decision.settled_ms
-                             << " eligible=" << fire_input.eligible
-                             << " event=" << fire_report.event;
-                        hero_log::append(line.str(), fire_report.event);
-                    }
-
-                    if (config_.debug.log_text)
+                    const auto status = handle_robotstatus_get();
+                    const uint64_t console_key = uint64_t(command_cache_.target_id) |
+                        (uint64_t(fire_decision.advice) << 8) |
+                        (uint64_t(status.program_mode) << 16);
+                    if (config_.debug.log_text && transmit_log_gate_.sample(
+                        hero_log::Clock::now(), console_key, std::chrono::milliseconds(1000)).emit)
                     {
                         LOGM_S("[TimedSerial][transmit] p-m:%6.2f | p-s:%6.2f | ps-s:%6.2f | y-m:%6.2f | y-s:%6.2f | ys-s:%6.2f | shoot_s:%6.2f | enemy_color:%d | target_id:%d | in_autoaim:%d | fire:%d",
                                attitude_cache_.pitch(),
@@ -387,16 +393,17 @@ namespace hardware
                                attitude_cache_.yaw(),
                                yaw_target,
                                command_cache_.yaw_speed,
-                               latest_robot_status_.robot_speed_mps,
-                               latest_robot_status_.enemy_color==EnemyColor::BLUE,
+                               status.robot_speed_mps,
+                               status.enemy_color==EnemyColor::BLUE,
                                command_cache_.target_id,
-                               latest_robot_status_.program_mode==ProgramMode::AUTO_AIM,
+                               status.program_mode==ProgramMode::AUTO_AIM,
                                fire_decision.advice);
                     }
                 }
                 else
                 {
-                    if (config_.debug.log_text)
+                    if (config_.debug.log_text && idle_log_gate_.sample(
+                        hero_log::Clock::now(), 0, std::chrono::milliseconds(1000)).emit)
                         LOGW_S("[TimedSerial] No new command to send");
                 }
 
@@ -416,6 +423,8 @@ namespace hardware
                 {
                     // LOGW_S("[TimedSerial] sending cost %lld ms", 
                     //     (long long)std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count());
+                    if (config_.debug.log_text && overrun_log_gate_.sample(
+                        hero_log::Clock::now(), 0, std::chrono::milliseconds(1000)).emit)
                     LOGW_S("[TimedSerial] sending overrun by %lld us", 
                            (long long)std::chrono::duration_cast<std::chrono::microseconds>(-sleep_duration).count());
                     LOGW_F("[TimedSerial] sending overrun by %lld us", 

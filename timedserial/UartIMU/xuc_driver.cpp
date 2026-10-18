@@ -196,6 +196,10 @@ void XucDriver::close()
     }
 }
 
+bool XucDriver::fire_actuation_enabled() const {
+    return fire_mode_enabled_.load() && !track_only() && !xuc_dry_run();
+}
+
 void XucDriver::transmit_cmd(float yaw, float yaw_spd, float pitch, float pitch_spd,
                              float yaw_acc, float pitch_acc, float dist,
                              uint8_t shoot, uint8_t target_id)

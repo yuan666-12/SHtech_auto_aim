@@ -42,14 +42,14 @@ namespace sensor
         if (is_camera_source)
         {
 #ifdef ENABLE_HIKCAM
-            video = new HikCamWrapper();
+            video = std::make_unique<HikCamWrapper>();
 #else
             throw std::runtime_error("camera source requested but ENABLE_HIKCAM is disabled");
 #endif
         }
         else
         {
-            video = new VideoWrapper(VideoSource);
+            video = std::make_unique<VideoWrapper>(VideoSource);
         }
 
         if (!video)
@@ -61,14 +61,24 @@ namespace sensor
         if (is_camera_source)
         {
             int retry_count = 0;
-            while (!video->init())
-            {
+            const auto check_stop = [&] {
+                if (config_.stop_requested && config_.stop_requested())
+                    throw std::runtime_error("camera initialization cancelled by stop request");
+            };
+            for (;;) {
+                check_stop();
+                if (video->init()) { check_stop(); break; }
+                check_stop();
                 ++retry_count;
                 if (retry_count == 1 || retry_count % 10 == 0)
                 {
                     LOGE_S("[sensor_submodule]Error: Initialize camera stream failed, retrying at 10Hz... (%d)", retry_count);
                 }
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                // Preserve 10 Hz retries, but notice Ctrl+C during the wait.
+                for (int i = 0; i < 10; ++i) {
+                    check_stop();
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
             }
 
             if (retry_count > 0)
@@ -102,7 +112,7 @@ namespace sensor
         if (video)
         {
             video->close();
-            delete video;
+            video.reset();
         }
     }
 

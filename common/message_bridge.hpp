@@ -176,6 +176,7 @@ struct PlannerToSerialMessage {
     AimedTargetType aim_mode = AimedTargetType::NONE;
     // One ID per new planner shot event; unchanged across all interpolated TXs.
     uint64_t single_shot_id = 0;
+    center_fire::Snapshot center_window;
 };
 
 /**

@@ -245,6 +245,7 @@ bool init(void)
     entrystage_config.debug.show_image = parser.get_bool("entrystage_show_image");
 
     sensor::SensorConfig sensor_config;
+    sensor_config.stop_requested = [] { return g_stop_request.load(); };
     sensor_config.debug.log_text = parser.get_bool("sensor_log_text");
     sensor_config.debug.log_file = parser.get_bool("sensor_log_file");
     sensor_config.debug.show_image = parser.get_bool("sensor_show_image");
@@ -337,6 +338,11 @@ bool init(void)
         parser.get_string("flip"),
         *sensor_from_serial_attitude_bridge,
         *sensor_from_serial_robot_status_bridge);
+
+    if (!sensor_submodule_registered || g_stop_request.load()) {
+        LOGW_S("[init] Camera unavailable or startup cancelled; aborting initialization");
+        return false;
+    }
 
     preprocess_submodule_registered = pipeline_stage0->register_submodule_with_params<detect::PreprocessSubModule>(preprocess_config);
 

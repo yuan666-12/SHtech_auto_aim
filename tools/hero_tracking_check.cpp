@@ -52,10 +52,10 @@ void fire_gate_checks() {
     x=in;x.eligible=false;require(check(x).advice==0,"rejected/lost/reset observations cannot fire");
     x=in;x.distance=0;require(check(x).advice==0,"zero distance cannot fire");
     x=in;x.requested=3;require(check(x).advice==0,"obsolete internal code 3 cannot escape arrival gate");
-    Gate pulse(immediate);x=in;x.aim_mode=4;x.requested=0;
+    Gate pulse(immediate);x=in;x.aim_mode=2;x.requested=0;
     require(pulse.evaluate(x).advice==0,"center alignment can be maintained outside phase window");
     x.requested=2;x.single_shot_id=1;
-    require(pulse.evaluate(x).advice==2,"fresh center event emits a single-shot code 2");
+    require(pulse.evaluate(x).advice==2,"legacy single event emits a single-shot code 2");
     int repeats=0;for(int i=0;i<20;++i){x.now+=5ms;x.rx_time=x.now;repeats+=pulse.evaluate(x).advice==2;}
     require(repeats==0,"200 Hz repeats of the same shot event cannot refire");
     x.single_shot_id=2;require(pulse.evaluate(x).advice==2,"new center event can fire again");
@@ -167,8 +167,8 @@ void planner_checks(const std::string& root,const std::string& config) {
     const auto observed_yaw=plan.target_yaw,observed_pitch=plan.target_pitch;
     target.predictor_state=TrackingState::TRACKING;
     plan=planner.make_plan(target,10,0,0,Attitude().R_world2imu(),std::chrono::high_resolution_clock::now());
-    require(plan.aimed_target_type==AimedTargetType::ARMOR_WITH_ARMOR_MODEL&&plan.fire_enable==1,
-        "stable single-armor prediction requests continuous fire before arrival gate");
+    require(plan.aimed_target_type==AimedTargetType::ARMOR_WITH_ARMOR_MODEL&&plan.fire_enable==0,
+        "untrusted single-armor fallback tracks with fire disabled under center-only policy");
     target.predictor_state=TrackingState::TEMP_LOST;target.armor_y_state(1)=100;
     plan=planner.make_plan(target,10,0,0,Attitude().R_world2imu(),std::chrono::high_resolution_clock::now());
     require(plan.aimed_target_type!=AimedTargetType::NONE&&plan.target_yaw==observed_yaw&&plan.target_pitch==observed_pitch,"TEMP_LOST holds last angles");
@@ -188,14 +188,14 @@ void planner_checks(const std::string& root,const std::string& config) {
     std::this_thread::sleep_for(210ms);
     target.last_observation_update_time=std::chrono::steady_clock::now();
     plan=planner.make_plan(target,10,0,0,Attitude().R_world2imu(),std::chrono::high_resolution_clock::now());
-    require(plan.aimed_target_type==AimedTargetType::VEHICLE_CENTER_WITH_VEHICLE_MODEL&&plan.fire_enable==2,
-        "trusted center model inside phase window requests code 2");
+    require(plan.aimed_target_type==AimedTargetType::VEHICLE_CENTER_WITH_VEHICLE_MODEL&&plan.fire_enable==0&&!plan.center_window.valid,
+        "geometry-only center planning never arms a real ballistic window");
     plan=planner.make_plan(target,10,0,0,Attitude().R_world2imu(),std::chrono::high_resolution_clock::now());
-    require(plan.fire_enable==0,"center phase window cannot bypass 200 ms shot interval");
+    require(plan.fire_enable==0,"geometry-only center planning stays unarmed across updates");
     target.tracked_state(6)+=.2;std::this_thread::sleep_for(210ms);
     target.last_observation_update_time=std::chrono::steady_clock::now();
     plan=planner.make_plan(target,10,0,0,Attitude().R_world2imu(),std::chrono::high_resolution_clock::now());
-    require(plan.fire_enable==0,"center phase outside window cannot request a shot after cooldown");
+    require(plan.fire_enable==0,"geometry-only planning cannot arm fire at any phase");
 }
 
 void pipeline_delay_checks(const std::string& config) {
@@ -304,7 +304,7 @@ void serial_checks() {
     require(driver->wait_for(20,0),"NaN command cancels target");
 
     for(auto&c:msg.command_array){c=RobotCommand{};c.distance=3;c.target_id=2;}
-    msg.aim_mode=AimedTargetType::VEHICLE_CENTER_WITH_VEHICLE_MODEL;
+    msg.aim_mode=AimedTargetType::ARMOR_WITH_ARMOR_MODEL;
     msg.fire_control_eligible=true;msg.observation_deadline=std::chrono::steady_clock::now()+200ms;
     planner.send(msg);
     for(int i=0;i<14;++i){driver->attitude(Attitude(20,10,0));std::this_thread::sleep_for(5ms);}

@@ -1,5 +1,6 @@
 #include "cam_wrapper.hpp"
 #include "hikcam_wrapper.hpp"
+#include "grab_strategy.hpp"
 #include <iostream>
 
 namespace
@@ -119,6 +120,8 @@ bool HikCamWrapper::init(bool debug)
             break;
         }
 
+        device_open_ = true;
+
         // 设置触发模式为off
         if (configured_bayer_pattern_ == BayerPattern::AUTO)
         {
@@ -165,6 +168,17 @@ bool HikCamWrapper::init(bool debug)
             break;
         }
 
+        // Select the newest buffered frame and discard older queued frames.
+        // Configure while stopped: the USB SDK rejects this after StartGrabbing.
+        nRet = hikcam::select_latest_frame(cam_handle);
+        if (nRet != MV_OK) {
+            std::cerr << "[HikCamWrapper] LatestImagesOnly rejected, camera init aborted: "
+                      << std::hex << nRet << std::dec << std::endl;
+            break;
+        }
+        if (debug)
+            std::cout << "[HikCamWrapper] grab_strategy=LatestImagesOnly" << std::endl;
+
         // 开始取流
         nRet = MV_CC_StartGrabbing(cam_handle);
         if (MV_OK != nRet)
@@ -173,6 +187,8 @@ bool HikCamWrapper::init(bool debug)
                 std::cout << "MV_CC_StartGarbbing Fail! nRet" << std::hex << nRet << std::endl;
             break;
         }
+
+        grabbing_ = true;
 
         // 开启自动曝光与自动增益，避免室内环境下画面欠曝（画面过暗）。
         // ExposureAuto/GainAuto 枚举值: 0=Off, 1=Once, 2=Continuous
@@ -251,20 +267,26 @@ bool HikCamWrapper::close(bool debug)
 
     // 停止取流
     // end grab image
-    nRet = MV_CC_StopGrabbing(cam_handle);
-    if (MV_OK != nRet)
-    {
-        if (debug)
-            std::cout << "MV_CC_StopGrabbing fail! nRet " << nRet << std::endl;
+    if (grabbing_) {
+        nRet = MV_CC_StopGrabbing(cam_handle);
+        if (MV_OK != nRet)
+        {
+            if (debug)
+                std::cout << "MV_CC_StopGrabbing fail! nRet " << nRet << std::endl;
+        }
+        grabbing_ = false;
     }
 
     // 关闭设备
     // close device
-    nRet = MV_CC_CloseDevice(cam_handle);
-    if (MV_OK != nRet)
-    {
-        if (debug)
-            std::cout << "MV_CC_CloseDevice fail! nRet " << nRet << std::endl;
+    if (device_open_) {
+        nRet = MV_CC_CloseDevice(cam_handle);
+        if (MV_OK != nRet)
+        {
+            if (debug)
+                std::cout << "MV_CC_CloseDevice fail! nRet " << nRet << std::endl;
+        }
+        device_open_ = false;
     }
 
     // 销毁句柄

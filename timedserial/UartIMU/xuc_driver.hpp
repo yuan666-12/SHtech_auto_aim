@@ -68,6 +68,7 @@ public:
     bool init() override;
     void start() override;
     void close() override;
+    bool fire_actuation_enabled() const override;
 
     void set_attitude_callback(AttitudeCallback cb) override;
     void set_robot_status_callback(RobotStatusCallback cb) override;

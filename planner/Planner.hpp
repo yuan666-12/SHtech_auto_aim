@@ -126,6 +126,7 @@ namespace predict
         bool disable_armor_with_vehicle_shoot_mode = false;
 
         bool consider_air_resistence = false;
+        bool force_center_preaim = true;
         bool geometry_only = false; // Testing only; requires DRY_RUN.
 
         /// @brief 调试模式标志

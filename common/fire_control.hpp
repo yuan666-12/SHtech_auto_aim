@@ -1,5 +1,6 @@
 #pragma once
 
+#include "center_fire_control.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -11,7 +12,7 @@ using Clock = std::chrono::steady_clock;
 constexpr double pi = 3.14159265358979323846;
 
 // Wire and internal requests use the same meanings: 0 stop, 1 continuous,
-// 2 one shot. Arrival is checked at the 200 Hz serial boundary, using live RX.
+// 2 one shot. Each mode is checked at the 200 Hz serial boundary using live RX.
 struct Config {
     double yaw_tolerance_deg = 0.5;
     double pitch_tolerance_deg = 0.2;
@@ -55,7 +56,7 @@ struct Config {
 
 enum class Reason {
     InvalidConfig, InvalidTarget, InvalidRx, PitchLimited, Slewing,
-    Misaligned, Settling, NoRequest, SingleConsumed, Ready
+    Misaligned, Settling, NoRequest, SingleConsumed, CenterWindowClosed, Ready
 };
 inline const char* name(Reason reason) {
     switch (reason) {
@@ -68,6 +69,7 @@ inline const char* name(Reason reason) {
         case Reason::Settling: return "settling";
         case Reason::NoRequest: return "no_request";
         case Reason::SingleConsumed: return "single_consumed";
+        case Reason::CenterWindowClosed: return "center_window_closed";
         case Reason::Ready: return "ready";
     }
     return "unknown";
@@ -80,6 +82,7 @@ struct Input {
     int requested = 0, target_id = 0, aim_mode = 0;
     bool eligible = false;
     uint64_t single_shot_id = 0;
+    center_fire::Snapshot center_window;
 };
 struct Decision {
     uint8_t advice = 0;
@@ -91,6 +94,7 @@ struct Decision {
 
 class Gate {
     Config config_;
+    center_fire::Window center_window_;
     Clock::time_point aligned_since_{}, first_aligned_rx_{}, last_check_{};
     int target_id_ = 0, aim_mode_ = 0;
     uint64_t last_single_shot_id_ = 0;
@@ -131,6 +135,19 @@ public:
         if (in.desired_pitch < 0.0 || in.desired_pitch > 43.0 ||
             in.sent_pitch < 0.0 || in.sent_pitch > 43.0)
             return fail(Reason::PitchLimited);
+        if (in.aim_mode == 4) {
+            // A live ballistic intersection replaces arrival at the ideal preaim.
+            // No 40 ms dwell is imposed on a moving armor's short hit window.
+            aligned_since_ = {}; first_aligned_rx_ = {};
+            if (in.rx_pitch < 0.0 || in.rx_pitch > 43.0)
+                return fail(Reason::PitchLimited);
+            if (!center_window_.config().valid) return fail(Reason::InvalidConfig);
+            if (in.requested != 2) { out.reason=Reason::NoRequest; return out; }
+            if (center_window_.evaluate(in.center_window,in.now,in.rx_yaw,in.rx_pitch,in.target_id)) {
+                out.advice=2;out.reason=Reason::Ready;
+            } else out.reason=Reason::CenterWindowClosed;
+            return out;
+        }
         out.yaw_limit_deg = config_.tolerance(config_.yaw_tolerance_deg, in.distance);
         out.pitch_limit_deg = config_.tolerance(config_.pitch_tolerance_deg, in.distance);
         out.yaw_error_deg = std::abs(std::remainder(in.desired_yaw-in.rx_yaw, 360.0));

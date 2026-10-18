@@ -3,6 +3,7 @@
 # 英雄规划器参数（由旧参数迁移，需实车逐项复核）
 
 planner:
+  force_center_preaim: 1          # Trusted vehicle model always uses center preaim; untrusted only tracks.
   latency: 150                    # Average total latency from PC to yaw action complete (in ms) # 15 
   single_shoot_latency: 230       # (in ms), shoot latency of single shoot # 105
   continue_shoot_latency: 45     # (in ms), shoot frequency of continuous shoot

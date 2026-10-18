@@ -14,6 +14,8 @@
 
 // packages
 #include <chrono>
+#include <functional>
+#include <memory>
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -23,6 +25,7 @@ namespace sensor
 {
     struct SensorConfig : pipeline::ModuleConfig
     {
+        std::function<bool()> stop_requested; // Also used during camera initialization.
         bool save_image = false;   /*!< 是否自动保存原始帧用于标定 */
         int save_interval = 0;     /*!< 每隔多少帧保存一张（<=0 时不保存） */
         bool calib_detect = false; /*!< 是否实时检测棋盘格角点（标定模式专用，会拖慢帧率） */
@@ -56,7 +59,7 @@ namespace sensor
     private:
         SensorConfig config_;
         // 传感器相关成员变量
-        WrapperHead *video = nullptr;           /*!< 视频输入接口指针 */
+        std::unique_ptr<WrapperHead> video;           /*!< 视频输入接口指针 */
         bool is_image_input_flipped = false;    /*!< 标记输入图像是否需要翻转 */
         
         // 状态跟踪

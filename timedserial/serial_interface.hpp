@@ -26,6 +26,7 @@ class SerialInterface
 {
 public:
     virtual ~SerialInterface() = default;
+    virtual bool fire_actuation_enabled() const { return false; }
 
     // 生命周期管理
     virtual bool init() = 0;
