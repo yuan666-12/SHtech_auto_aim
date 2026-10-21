@@ -3,13 +3,13 @@
  * @brief 迭代扩展卡尔曼滤波器 (IESEKF) 模块
  * @author Cao Jingyan
  * @date 2026/01/17
- * 
+ *
  * 该模块提供：
  * 1. 迭代误差状态扩展卡尔曼滤波器实现
  * 2. 相比普通EKF，增加了高斯-牛顿迭代更新过程
  * 3. 显著解决高速旋转和强非线性系统下的线性化误差问题
  * 4. 支持流形运算（角度归一化等）
- * 
+ *
  * 核心改进：
  * - 在更新阶段进行多次迭代，不断寻找最优线性化工作点
  * - 引入 x_minus 接口处理角度等周期性状态量
@@ -50,22 +50,22 @@ namespace mathutils
         // === 函数指针类型定义 ===
         /// @brief 状态转移函数类型：x(k+1) = f(x(k))
         using Func_x1d_x1d = std::function<Matrix_x1d(const Matrix_x1d &)>;
-        
+
         /// @brief 观测函数类型：z(k) = h(x(k))
         using Func_z1d_x1d_id = std::function<Matrix_z1d(const Matrix_x1d &, const int id)>;
-        
+
         /// @brief 观测雅可比函数类型：H = ∂h/∂x
         using Func_zxd_x1d_id = std::function<Matrix_zxd(const Matrix_x1d &, const int id)>;
-        
+
         /// @brief 状态雅可比函数类型：F = ∂f/∂x；过程噪声协方差更新函数类型
         using Func_xxd_x1d = std::function<Matrix_xxd(const Matrix_x1d &)>;
-        
+
         /// @brief 观测噪声协方差更新函数类型
         using Func_zzd_z1d = std::function<Matrix_zzd(const Matrix_z1d &)>;
-        
+
         /// @brief 广义加法函数类型：x_new = x + delta
         using Add_func = std::function<Matrix_x1d(const Matrix_x1d &, const Matrix_x1d &)>;
-        
+
         /// @brief 广义减法函数类型：delta = x1 - x2 (用于处理角度差等流形运算)
         using Minus_func = std::function<Matrix_x1d(const Matrix_x1d &, const Matrix_x1d &)>;
 
@@ -120,7 +120,7 @@ namespace mathutils
         IESEKF_Double_Armor(const Func_x1d_x1d &f_, const Func_z1d_x1d_id &h_,
                const Func_xxd_x1d &cal_F_, const Func_zxd_x1d_id cal_H_,
                const Func_xxd_x1d &update_Q_, const Func_zzd_z1d &update_R_,
-               const Matrix_xxd &P0, const Matrix_x1d &X0, 
+               const Matrix_xxd &P0, const Matrix_x1d &X0,
                const Add_func &x_add_, const Minus_func &x_minus_,
                int max_iter_ = 5, double stop_threshold_ = 1e-4)
         : f(f_), h(h_), calculate_F(cal_F_), calculate_H(cal_H_), update_Q(update_Q_),
@@ -135,8 +135,8 @@ namespace mathutils
          * @brief 重置状态向量
          * @param X0 新的初始状态向量
          */
-        void reset(const Matrix_x1d &X0) 
-        { 
+        void reset(const Matrix_x1d &X0)
+        {
             X_post = X_pri = X0;
             P_post = P_pri = P_initial;
         }
@@ -160,41 +160,41 @@ namespace mathutils
         void reset(const Func_x1d_x1d &f_, const Func_z1d_x1d_id &h_,
                    const Func_xxd_x1d &cal_F_, const Func_zxd_x1d_id cal_H_,
                    const Func_xxd_x1d &update_Q_, const Func_zzd_z1d &update_R_,
-                   const Matrix_xxd &P0, const Matrix_x1d &X0, 
-                   const Add_func &x_add_, const Minus_func &x_minus_) 
+                   const Matrix_xxd &P0, const Matrix_x1d &X0,
+                   const Add_func &x_add_, const Minus_func &x_minus_)
         {
-            f = f_; 
-            h = h_; 
-            calculate_F = cal_F_; 
+            f = f_;
+            h = h_;
+            calculate_F = cal_F_;
             calculate_H = cal_H_;
-            update_Q = update_Q_; 
+            update_Q = update_Q_;
             update_R = update_R_;
-            P_post = P0; 
+            P_post = P0;
             P_initial = P_pri = P0;
             X_post = X0;
             X_pri = X0;
-            x_add = x_add_; 
+            x_add = x_add_;
             x_minus = x_minus_;
         }
 
-        Matrix_xxd get_P() 
-        { 
-            return P_post; 
+        Matrix_xxd get_P()
+        {
+            return P_post;
         }
 
-        Func_zzd_z1d get_update_R() 
-        { 
-            return update_R; 
+        Func_zzd_z1d get_update_R()
+        {
+            return update_R;
         }
 
-        Func_z1d_x1d_id get_h() 
-        { 
-            return h; 
+        Func_z1d_x1d_id get_h()
+        {
+            return h;
         }
 
-        Func_zxd_x1d_id get_calculate_H() 
-        { 
-            return calculate_H; 
+        Func_zxd_x1d_id get_calculate_H()
+        {
+            return calculate_H;
         }
 
         /**
@@ -233,15 +233,15 @@ namespace mathutils
             };
             if (!Z.allFinite() || !R.allFinite() || !X_pri.allFinite() ||
                 !P_pri.allFinite()) return invalid();
-            
+
             // 迭代初始点设为预测值 (先验)
-            Matrix_x1d X_cur = X_pri; 
+            Matrix_x1d X_cur = X_pri;
 
             for (int i = 0; i < max_iter; ++i)
             {
                 // 1. 在当前迭代点处重新线性化
                 H = calculate_H(X_cur, id);
-                
+
                 // 2. 计算卡尔曼增益
                 // K = P_pri * H^T * (H * P_pri * H^T + R)^-1
                 Matrix_zzd S = H * P_pri * H.transpose() + R;
@@ -264,7 +264,7 @@ namespace mathutils
                 // dx_pri = prior-current, so the correction has a MINUS sign.
                 // 这一步将当前工作点拉向"观测"和"先验"的平衡点
                 Matrix_x1d dx = K * (innovation - H * dx_pri);
-                
+
                 // 得到下一次迭代的状态
                 Matrix_x1d X_next = x_add(X_pri, dx);
                 if (!X_next.allFinite()) return invalid();
@@ -281,7 +281,7 @@ namespace mathutils
 
             // 更新最终状态
             X_post = X_cur;
-            
+
             // 更新协方差 (使用最后一次线性化的 H)
             // 注意：这里使用 Joseph 形式会更稳定，但计算量更大
             const Matrix_xxd correction = Matrix_xxd::Identity() - K * H;
@@ -313,7 +313,7 @@ namespace mathutils
             max_iter = max_iter_;
             stop_threshold = stop_threshold_;
         }
-    }; 
+    };
 
 } // namespace mathutils
 

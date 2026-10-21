@@ -2,6 +2,7 @@
 import cv2
 import numpy as np
 import os
+from pathlib import Path
 
 def main():
     # 保留之前手眼标定得到的旋转矩阵
@@ -38,7 +39,7 @@ def main():
     t = np.array([[tx], [ty], [tz]])
 
     # 保存到 asset/
-    output_dir = os.path.expanduser("~/rm_project/SHtech_auto_aim/asset")
+    output_dir = Path(__file__).resolve().parents[2] / "asset"
     os.makedirs(output_dir, exist_ok=True)
 
     fs = cv2.FileStorage(os.path.join(output_dir, "extrinsic-param.yml"), cv2.FILE_STORAGE_WRITE)

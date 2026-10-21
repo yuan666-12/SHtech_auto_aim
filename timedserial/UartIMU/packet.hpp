@@ -34,7 +34,7 @@ typedef struct __attribute__((packed))
 
 /**
  * @brief IMU位姿数据
- * 
+ *
  */
 #define CMD_MCU_DATA 0x1021
 typedef struct __attribute__((packed))
@@ -48,26 +48,26 @@ typedef struct __attribute__((packed))
 
 /**
  * @brief 赛场信息
- * 
+ *
  */
 #define CMD_ROBOT_DATA 0x1022
-typedef struct __attribute__((packed)) 
-{ 
-    uint16_t red_1_robot_HP;   
-    uint16_t red_2_robot_HP;   
-    uint16_t red_3_robot_HP;   
-    uint16_t red_4_robot_HP;   
-    uint16_t red_5_robot_HP;   
-    uint16_t red_7_robot_HP;   
-    uint16_t red_outpost_HP; 
-    uint16_t red_base_HP;   
-    uint16_t blue_1_robot_HP;   
-    uint16_t blue_2_robot_HP;   
-    uint16_t blue_3_robot_HP;   
-    uint16_t blue_4_robot_HP;   
-    uint16_t blue_5_robot_HP;   
-    uint16_t blue_7_robot_HP;   
-    uint16_t blue_outpost_HP; 
+typedef struct __attribute__((packed))
+{
+    uint16_t red_1_robot_HP;
+    uint16_t red_2_robot_HP;
+    uint16_t red_3_robot_HP;
+    uint16_t red_4_robot_HP;
+    uint16_t red_5_robot_HP;
+    uint16_t red_7_robot_HP;
+    uint16_t red_outpost_HP;
+    uint16_t red_base_HP;
+    uint16_t blue_1_robot_HP;
+    uint16_t blue_2_robot_HP;
+    uint16_t blue_3_robot_HP;
+    uint16_t blue_4_robot_HP;
+    uint16_t blue_5_robot_HP;
+    uint16_t blue_7_robot_HP;
+    uint16_t blue_outpost_HP;
     uint16_t blue_base_HP;
     uint8_t robot_id;
 } robot_data_t;

@@ -2,11 +2,11 @@
 # -*- coding: utf-8 -*-
 """
 相机标定 + 验证脚本
-用法：
-    python3 calibrate_and_verify.py \
-        --intrinsic_dir /home/rcs/deployments/SHtech_auto_aim-20260801/SHtech_auto_aim/intrinsic_calibration_data_20260803 \
-        --extrinsic_dir /home/rcs/deployments/SHtech_auto_aim-20260801/SHtech_auto_aim/external_calibration_data_20260803 \
-        --output ~/rm_project/SHtech_auto_aim/asset \
+用法（从当前项目根目录执行，数据目录按实际采集位置填写）：
+    python3 tools/calibration_verify/calibrate_and_verify.py \
+        --intrinsic_dir ./calib_intrinsic \
+        --extrinsic_dir ./calib_extrinsic \
+        --output ./asset \
         --pattern 11 8 \
         --square 20.0
 """

@@ -3,7 +3,7 @@
  * @brief 多策略预测器模块 - 整合跟踪、规划和可视化的主预测系统
  * @author Cao Jingyan
  * @date 2025/11/21
- * 
+ *
  * 该模块提供：
  * 1. 集成CoordTransformer、Tracker、Planner的完整预测流程
  * 2. 装甲板筛选和目标管理逻辑
@@ -38,10 +38,10 @@ using namespace mathutils;
 
 #define NUM_TRACKER 3
 
-namespace predict
-{
-    struct MultiPolicyPredictorConfig : pipeline::ModuleConfig
-    {
+namespace predict {
+    struct PredictorFrameDiagnostic;
+    struct FrameTrackerDiagnostic;
+    struct MultiPolicyPredictorConfig : pipeline::ModuleConfig {
         bool adjust_mode = false;
         bool adjust_tracker_noise = false;
     };
@@ -51,9 +51,8 @@ namespace predict
      * @details 合并原有 PredictSubModule 和 MultiPolicyPredictor 的功能，
      *          既实现 SubModule 接口用于 pipeline，又包含完整的预测算法实现
      */
-    class MultiPolicyPredictorSubModule : public pipeline::SubModule
-    {
-    public:
+    class MultiPolicyPredictorSubModule : public pipeline::SubModule {
+      public:
         /**
          * @brief 带参数构造函数
          * @param comm_latency_ 通信延迟时间 (毫秒)
@@ -64,7 +63,7 @@ namespace predict
          * @param adjust_ 参数调整模式标志
          * @details 初始化所有核心组件，设置配置参数
          */
-        explicit MultiPolicyPredictorSubModule(const MultiPolicyPredictorConfig& config);
+        explicit MultiPolicyPredictorSubModule(const MultiPolicyPredictorConfig &config);
         virtual ~MultiPolicyPredictorSubModule() = default;
 
         /**
@@ -73,10 +72,9 @@ namespace predict
          * @param[in] parent     父任务指针，用于生命周期检查
          * @return  bool         返回 true 表示数据应该传递到下游，false 表示丢弃数据
          */
-        SubModuleResult process(std::shared_ptr<ThreadDataPack> data, 
-                    const pipeline::BasicTask* parent) override;
+        SubModuleResult process(std::shared_ptr<ThreadDataPack> data, const pipeline::BasicTask *parent) override;
 
-    public:
+      public:
         /// @brief 时间点类型别名
         using TP = std::chrono::high_resolution_clock::time_point;
 
@@ -84,7 +82,7 @@ namespace predict
         const double max_yaw_accept = 0.85;
 
         const double max_distance_accept = 4.5; // 最大可接受距离 (米)
-        const double max_height_accept = 1.5; // m
+        const double max_height_accept = 1.5;   // m
 
         double cx = 640; // Updated from actual image dimensions.
         double cy = 360;
@@ -92,14 +90,14 @@ namespace predict
 
         const float dist_weight = 0.6f; // 距离权重
 
-	// on axcl
+        // on axcl
         const int max_autoaim_mode_counter = 15;
 
-    private:
+      private:
         // === 配置参数 ===
         /// @brief 调试模式标志 - 控制调试信息输出
         MultiPolicyPredictorConfig config_;
-        
+
         /// @brief 参数调整模式标志 - 控制实时参数调整界面
         int in_autoaim_mode_adjust = 0;
 
@@ -112,19 +110,20 @@ namespace predict
 
         /// @brief 当前备选跟踪的观测值 [y, x, z, yaw]
         std::array<Eigen::Matrix<double, 4, 1>, NUM_TRACKER> secondary_tracked_measurements;
-        
+
         /// @brief 当前跟踪的装甲板对象
         std::array<bbox_t, NUM_TRACKER> tracked_armors;
 
         /// @brief 坐标变换器单例 - 负责坐标系转换
-        CoordTransformer& coord_transformer;
+        CoordTransformer &coord_transformer;
 
         int autoaim_mode_counter = 0; // 自瞄模式计数器，用于控制模式切换逻辑
         bool in_autoaim_mode = false; // 当前是否处于自瞄模式
 
+        bool target_locked_ = false;
         int fixed_target_id = 0; // 锁定目标的ID
 
-    public:
+      public:
         /**
          * @brief 主预测函数 - 执行完整的预测流程
          * @param data 线程数据包，包含：
@@ -143,11 +142,28 @@ namespace predict
          */
         void predict(std::shared_ptr<ThreadDataPack> data);
 
-    private:
+      private:
+        struct ArmorObservation {
+            bbox_t armor;
+            Eigen::Vector4d measurement = Eigen::Vector4d::Zero();
+            double distance = 0;
+        };
+        void update_autoaim_mode(const RobotStatus &status);
+        double armor_score(const bbox_t &armor, double distance) const;
+        std::vector<ArmorObservation> collect_observations(const ThreadDataPack &data, const RobotStatus &status,
+                                                           bool ignore_ids, PredictorFrameDiagnostic &diagnostic);
+        void partition_observations(const std::vector<ArmorObservation> &observations,
+                                    std::vector<ArmorObservation> &fresh, std::vector<ArmorObservation> &tracked);
+        void update_tracker(int index, std::vector<ArmorObservation> &fresh,
+                            const std::vector<ArmorObservation> &tracked, bool ignore_ids, TP time, double attitude_yaw,
+                            FrameTrackerDiagnostic &diagnostic);
+        void copy_target(Target &output, int index);
+        void publish_target(ThreadDataPack &data, double yaw, const Eigen::Matrix3d &rotation);
+
         int select_target_id(double attitude_yaw, const Eigen::Matrix3d &R_world2imu);
 
         int reset_target_for_plan(Target &target, double attitude_yaw, const Eigen::Matrix3d &R_world2imu);
     };
-}
+} // namespace predict
 
 #endif // PREDICT_LINEAR_PREDICTOR_SUBMODULE_Htracked_armor

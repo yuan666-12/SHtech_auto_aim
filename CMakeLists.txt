@@ -10,7 +10,7 @@ endif ()
 
 add_compile_definitions(PROJECT_DIR="${PROJECT_SOURCE_DIR}")
 
-set(INFERENCE_BACKEND "AXCL" CACHE STRING "Select inference backend: ONNX, TRT, AXCL")
+set(INFERENCE_BACKEND "ONNX" CACHE STRING "Select inference backend: ONNX, TRT, AXCL")
 set_property(CACHE INFERENCE_BACKEND PROPERTY STRINGS ONNX TRT AXCL)
 
 option(ENABLE_FOXGLOVE "Build with Foxglove module and thirdparty SDK" OFF)
@@ -28,6 +28,10 @@ if(ENABLE_FOXGLOVE)
 endif()
 
 option(USE_HIKCAM "Build with HikCAM Lib" ON)
+option(ENABLE_LEGACY_UART "Build the optional RMCVSerial UART driver" ON)
+if(ENABLE_LEGACY_UART)
+    add_compile_definitions(ENABLE_LEGACY_UART)
+endif()
 
 set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build." FORCE)
 

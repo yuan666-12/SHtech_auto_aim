@@ -1,11 +1,11 @@
-//OpenCV
+// OpenCV
 #include <opencv2/opencv.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/dnn.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/calib3d/calib3d.hpp>
-//Std
+// Std
 #include <vector>
 #include <fstream>
 #include <cstdio>
@@ -24,12 +24,14 @@
 #include <future>
 #include <map>
 
-//Submodules
+// Submodules
 #include "entrystage/entryStage_submodule.hpp"
 #include "sensor/sensor_submodule.hpp"
 #include "timedserial/timed_serial.hpp"
 #include "timedserial/serial_interface.hpp"
+#ifdef ENABLE_LEGACY_UART
 #include "timedserial/UartIMU/uart_driver.hpp"
+#endif
 #include "timedserial/UartIMU/mock_driver.hpp"
 #include "timedserial/UartIMU/xuc_driver.hpp"
 #include "detect/preprocess_submodule.hpp"
@@ -41,10 +43,10 @@
 #endif
 #include "planner/planner_submodule.hpp"
 
-//Math Utils
+// Math Utils
 #include "mathutils/CoordTransformer.hpp"
 
-//Common
+// Common
 #include "common.hpp"
 
 #define GPU

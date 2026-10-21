@@ -55,14 +55,14 @@ template<typename MessageType>
 class PushBridge {
 public:
     using CallbackFunc = std::function<void(const MessageType&)>;
-    
+
     PushBridge() = default;
     ~PushBridge() = default;
-    
+
     // 禁用拷贝
     PushBridge(const PushBridge&) = delete;
     PushBridge& operator=(const PushBridge&) = delete;
-    
+
     /**
      * @brief   设置消息接收回调（初始化时调用）
      * @param[in] callback 回调函数
@@ -74,7 +74,7 @@ public:
         }
         callback_ = std::move(callback);
     }
-    
+
     /**
      * @brief   发送消息（高频调用）
      * @param[in] msg 要发送的消息
@@ -95,14 +95,14 @@ public:
             LOGE_S("[Bridge] PushBridge send unknown exception");
         }
     }
-    
+
     /**
      * @brief   检查是否已设置接收器
      */
     bool has_receiver() const {
         return static_cast<bool>(callback_);
     }
-    
+
 private:
     CallbackFunc callback_;
 };
@@ -177,6 +177,8 @@ struct PlannerToSerialMessage {
     // One ID per new planner shot event; unchanged across all interpolated TXs.
     uint64_t single_shot_id = 0;
     center_fire::Snapshot center_window;
+    bool vehicle_model_trusted = false; // Diagnostic provenance, not fire permission.
+    int model_rotation_count = 0, tracker_model = 0;
 };
 
 /**

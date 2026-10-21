@@ -7,6 +7,7 @@
 #include "detect_submodule.hpp"
 #include "chrono"
 #include <iostream>
+#include <filesystem>
 
 #if INFERENCE_BACKEND_TYPE == 1
 #include "ONNX/ONNX.hpp"
@@ -16,28 +17,23 @@
 #include "AXCL/AXCL.hpp"
 #endif
 
-namespace detect
-{
-    static inline void map_bbox_to_source(const DetectInputMap &map, bbox_t &bbox)
-    {
-        if (!map.valid || map.dst_size.width <= 0 || map.dst_size.height <= 0)
-        {
+namespace detect {
+    static inline void map_bbox_to_source(const DetectInputMap &map, bbox_t &bbox) {
+        if (!map.valid || map.dst_size.width <= 0 || map.dst_size.height <= 0) {
             return;
         }
 
         const float scale_x = static_cast<float>(map.src_roi.width) / static_cast<float>(map.dst_size.width);
         const float scale_y = static_cast<float>(map.src_roi.height) / static_cast<float>(map.dst_size.height);
 
-        for (auto &pt : bbox.pts)
-        {
+        for (auto &pt : bbox.pts) {
             pt.x = map.src_roi.x + pt.x * scale_x;
             pt.y = map.src_roi.y + pt.y * scale_y;
         }
     }
 
-    DetectSubModule::DetectSubModule(const DetectConfig& config, const std::string& OnnxFileName)
-        : SubModule(SubModuleName::DETECT), config_(config)
-    {
+    DetectSubModule::DetectSubModule(const DetectConfig &config, const std::string &OnnxFileName)
+        : SubModule(SubModuleName::DETECT), config_(config) {
         LOGM_S("[detect] constructing with model: %s", OnnxFileName.c_str());
 #if INFERENCE_BACKEND_TYPE == 1
         model.reset(new ONNX(OnnxFileName));
@@ -51,15 +47,12 @@ namespace detect
         LOGM_S("[detect] model loaded");
     }
 
-    SubModuleResult DetectSubModule::process(std::shared_ptr<ThreadDataPack> data,
-                                             const pipeline::BasicTask* parent)
-    {
+    SubModuleResult DetectSubModule::process(std::shared_ptr<ThreadDataPack> data, const pipeline::BasicTask *parent) {
         std::vector<bbox_t> output_bboxes;
         data->bboxes.clear();
         auto t2 = std::chrono::steady_clock::now();
 
-        if (!data->detect_input_map.valid || data->detect_input.empty())
-        {
+        if (!data->detect_input_map.valid || data->detect_input.empty()) {
             LOGE_S("[detect] missing preprocess output");
             return SubModuleResult::FAILURE;
         }
@@ -68,8 +61,7 @@ namespace detect
 
         auto t3 = std::chrono::steady_clock::now();
 
-        for (auto &t_bbox : output_bboxes)
-        {
+        for (auto &t_bbox : output_bboxes) {
             map_bbox_to_source(data->detect_input_map, t_bbox);
         }
         data->bboxes = output_bboxes;
@@ -77,40 +69,34 @@ namespace detect
         static int frame_counter = 0;
         static std::string output_dir = "./frames/";
 
-        if (config_.debug.show_image)
-        {
+        if (config_.debug.show_image) {
             // Internal color ids: 0 red, 1 blue, 2 gray (OpenCV uses BGR).
             static const cv::Scalar colors[3] = {{0, 0, 255}, {255, 0, 0}, {255, 255, 255}};
             cv::Mat im2show = data->frame.clone();
-            for (const auto &b : data->bboxes)
-            {
+            for (const auto &b : data->bboxes) {
                 const int color_index = (b.color_id >= 0 && b.color_id < 3) ? b.color_id : 2;
                 const cv::Scalar &box_color = colors[color_index];
                 cv::line(im2show, b.pts[0], b.pts[1], box_color, 4, cv::LINE_AA);
                 cv::line(im2show, b.pts[1], b.pts[2], box_color, 4, cv::LINE_AA);
                 cv::line(im2show, b.pts[2], b.pts[3], box_color, 4, cv::LINE_AA);
                 cv::line(im2show, b.pts[3], b.pts[0], box_color, 4, cv::LINE_AA);
-                const std::string label = "BLUE id=" + std::to_string(b.tag_id);
-                cv::putText(im2show, label, b.pts[0], cv::FONT_HERSHEY_SIMPLEX,
-                            1.0, box_color, 3, cv::LINE_AA);
+                static const char *labels[] = {"RED", "BLUE", "GRAY"};
+                const std::string label = std::string(labels[color_index]) + " id=" + std::to_string(b.tag_id);
+                cv::putText(im2show, label, b.pts[0], cv::FONT_HERSHEY_SIMPLEX, 1.0, box_color, 3, cv::LINE_AA);
             }
 
             const int max_display_width = 800;
             const int max_display_height = 560;
-            const double display_scale = std::min(
-                1.0,
-                std::min(static_cast<double>(max_display_width) / im2show.cols,
-                         static_cast<double>(max_display_height) / im2show.rows));
-            if (display_scale < 1.0)
-            {
-                cv::resize(im2show, im2show, cv::Size(), display_scale, display_scale,
-                           cv::INTER_AREA);
+            const double display_scale =
+                std::min(1.0, std::min(static_cast<double>(max_display_width) / im2show.cols,
+                                       static_cast<double>(max_display_height) / im2show.rows));
+            if (display_scale < 1.0) {
+                cv::resize(im2show, im2show, cv::Size(), display_scale, display_scale, cv::INTER_AREA);
             }
 
             static bool dir_created = false;
-            if (!dir_created)
-            {
-                system(("mkdir -p " + output_dir).c_str());
+            if (!dir_created) {
+                std::filesystem::create_directories(output_dir);
                 dir_created = true;
             }
 
@@ -124,27 +110,22 @@ namespace detect
             autoaim_gui::waitKey(1);
         }
 
-        if (config_.debug.log_text)
-        {
+        if (config_.debug.log_text) {
             LOGM_S("[detect] Info: detected %ld objects", data->bboxes.size());
-            for (const auto &b : data->bboxes)
-            {
+            for (const auto &b : data->bboxes) {
                 LOGM_S("[detect] Detect_Data: colorid: %d, tag_id: %d, "
                        "pts=(%.1f,%.1f)(%.1f,%.1f)(%.1f,%.1f)(%.1f,%.1f)",
-                       b.color_id, b.tag_id,
-                       b.pts[0].x, b.pts[0].y, b.pts[1].x, b.pts[1].y,
-                       b.pts[2].x, b.pts[2].y, b.pts[3].x, b.pts[3].y);
+                       b.color_id, b.tag_id, b.pts[0].x, b.pts[0].y, b.pts[1].x, b.pts[1].y, b.pts[2].x, b.pts[2].y,
+                       b.pts[3].x, b.pts[3].y);
             }
         }
 
         auto t4 = std::chrono::steady_clock::now();
         if (config_.debug.log_text)
-            LOGM_S(
-                "DetectSubModule Inference %.2lfms Show %.2lfms",
-                std::chrono::duration_cast<std::chrono::duration<double>>(t3 - t2).count() * 1000,
-                std::chrono::duration_cast<std::chrono::duration<double>>(t4 - t3).count() * 1000
-            );
+            LOGM_S("DetectSubModule Inference %.2lfms Show %.2lfms",
+                   std::chrono::duration_cast<std::chrono::duration<double>>(t3 - t2).count() * 1000,
+                   std::chrono::duration_cast<std::chrono::duration<double>>(t4 - t3).count() * 1000);
 
         return SubModuleResult::SUCCESS;
     }
-}
+} // namespace detect

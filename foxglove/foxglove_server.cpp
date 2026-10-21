@@ -56,7 +56,7 @@ namespace foxgloveSer
         if (!tf_channel_result.has_value())
         {
             std::cerr << "Failed to create tf channel: " << foxglove::strerror(tf_channel_result.error()) << '\n';
-            return; 
+            return;
         }
         tf_channel = std::make_unique<foxglove::schemas::FrameTransformChannel>(std::move(tf_channel_result.value()));
     }
@@ -65,7 +65,7 @@ namespace foxgloveSer
     {
     }
 
-    
+
     void FoxgloveServer_t::handle_robot_state_message(const pipeline::bridge::EntryStageToFoxgloveRobotMessage& msg)
     {
         const auto& enemy_robot_pose = msg.enemy_robot_state;
@@ -85,10 +85,10 @@ namespace foxgloveSer
         tf.translation = foxglove::schemas::Vector3(0.0, 0.0, 0.0);
 
         // 单位旋转（四元数 w=1, x=y=z=0）
-    
+
         tf.rotation = foxglove::schemas::Quaternion(0.0, 0.0, 0.0, 1.0);
-    
-    
+
+
         tf_channel->log(tf);
 
 
@@ -131,24 +131,24 @@ namespace foxgloveSer
             {
                 std::lock_guard<std::mutex> lock(writer_mutex);
                 foxglove::McapWriterOptions mcap_options = {};
-                
+
                 // 确保mcap目录存在
                 std::filesystem::path mcap_dir = "mcap";
                 if (!std::filesystem::exists(mcap_dir))
                 {
                     std::filesystem::create_directories(mcap_dir);
                 }
-                
+
                 // 创建以时间戳命名的mcap文件
                 auto now = std::chrono::system_clock::now();
                 auto time_t_now = std::chrono::system_clock::to_time_t(now);
                 std::tm tm_now;
                 localtime_r(&time_t_now, &tm_now);
-                
+
                 std::ostringstream filename;
                 filename << "mcap/" << std::put_time(&tm_now, "%Y%m%d_%H%M%S") << ".mcap";
                 mcap_options.path = filename.str();
-                
+
                 auto writer_result = foxglove::McapWriter::create(mcap_options);
                 if (!writer_result.has_value())
                 {
@@ -165,7 +165,7 @@ namespace foxgloveSer
                     writer.reset();
                 }
             }
-            
+
         }
     }
 }

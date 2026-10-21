@@ -3,7 +3,7 @@
  * @brief 数学工具模块 - 为自瞄预测系统提供数学计算函数
  * @author Cao Jingyan
  * @date 2025/11/16
- * 
+ *
  * 该模块提供：
  * 1. 弹道计算相关的数学函数
  * 2. 坐标变换和几何计算工具
@@ -32,8 +32,7 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/eigen.hpp>
 
-namespace mathutils
-{
+namespace mathutils {
     /// @brief 三维位置向量类型别名，使用Eigen::Vector3d
     using Pos3D = Eigen::Vector3d;
 
@@ -47,8 +46,7 @@ namespace mathutils
      * @return 在XY平面内的距离（忽略Z分量）
      * @details 计算点到原点在水平面上的投影距离
      */
-    static inline double distance_2D(const Pos3D &m_pw)
-    {
+    static inline double distance_2D(const Pos3D &m_pw) {
         return sqrt(m_pw(0, 0) * m_pw(0, 0) + m_pw(1, 0) * m_pw(1, 0));
     }
 
@@ -58,8 +56,7 @@ namespace mathutils
      * @return 从原点到目标点的3D直线距离
      * @details 计算空间中两点间的直线距离
      */
-    static inline double distance_3D(const Pos3D &m_pw)
-    {
+    static inline double distance_3D(const Pos3D &m_pw) {
         return sqrt(m_pw(0, 0) * m_pw(0, 0) + m_pw(1, 0) * m_pw(1, 0) + m_pw(2, 0) * m_pw(2, 0));
     }
 
@@ -69,8 +66,7 @@ namespace mathutils
      * @return 俯仰角（弧度制）- 仰角为负，俯角为正
      * @details 计算XY水平面与原点到目标连线的夹角
      */
-    static inline double pw_to_pitch(const Pos3D &m_pw)
-    {
+    static inline double pw_to_pitch(const Pos3D &m_pw) {
         return std::atan2(m_pw(2, 0), distance_2D(m_pw));
     }
 
@@ -80,8 +76,7 @@ namespace mathutils
      * @return 偏航角（弧度制）- Y轴正方向为0, 绕z轴逆时针为正
      * @details 计算XY平面内从Y轴到目标方向的角度
      */
-    static inline double pw_to_yaw(const Pos3D &m_pw)
-    {
+    static inline double pw_to_yaw(const Pos3D &m_pw) {
         return std::atan2(m_pw(1, 0), m_pw(0, 0));
     }
 
@@ -93,11 +88,9 @@ namespace mathutils
     // Low trajectory, Z up. With the existing 42 mm horizontal drag model,
     // D=expm1(k*d)/k and t=D/(v*cos(pitch)). Use that SAME t in
     // h=v*sin(pitch)*t-g*t*t/2. There is no unconstrained Newton iteration.
-    static inline BallisticSolution solve_ballistic_trajectory(
-        const Pos3D &pw, double speed, bool consider_resistence)
-    {
-        if (!pw.allFinite() || !std::isfinite(speed) || speed <= 0.0)
-            return {};
+    static inline BallisticSolution solve_ballistic_trajectory(const Pos3D &pw, double speed,
+                                                               bool consider_resistence) {
+        if (!pw.allFinite() || !std::isfinite(speed) || speed <= 0.0) return {};
         const double d = std::hypot(pw.x(), pw.y());
         if (d <= 1e-9) return {};
         double D = d;
@@ -118,8 +111,7 @@ namespace mathutils
     }
 
     // Point on the near-side radial surface; works in every XY quadrant.
-    static inline Pos3D near_radial_point(Pos3D center, double radius)
-    {
+    static inline Pos3D near_radial_point(Pos3D center, double radius) {
         const double d = std::hypot(center.x(), center.y());
         if (!center.allFinite() || !std::isfinite(radius) || d <= 1e-9)
             throw std::runtime_error("invalid vehicle radial geometry");
@@ -136,12 +128,9 @@ namespace mathutils
      *          通过求解二次方程找到两种可能的弹道，选择较短时间的弹道
      *          考虑重力下降和初始速度的抛物线运动
      */
-    static inline double cal_fly_time(const Pos3D &pw, double shoot_speed = 23., bool consider_resistence = false)
-    {
+    static inline double cal_fly_time(const Pos3D &pw, double shoot_speed = 23., bool consider_resistence = false) {
         return solve_ballistic_trajectory(pw, shoot_speed, consider_resistence).flight_time;
     }
-
-    
 
     /**
      * @brief 计算四边形的几何中心
@@ -149,8 +138,7 @@ namespace mathutils
      * @return 中心点坐标，为四个顶点坐标的平均值
      * @details 通过求四个角点坐标的算术平均值得到几何中心
      */
-    static inline cv::Point2f points_center(cv::Point2f pts[4])
-    {
+    static inline cv::Point2f points_center(const cv::Point2f pts[4]) {
         cv::Point2f center;
         center.x = (pts[0].x + pts[1].x + pts[2].x + pts[3].x) / 4;
         center.y = (pts[0].y + pts[1].y + pts[2].y + pts[3].y) / 4;
@@ -164,16 +152,15 @@ namespace mathutils
      * @return 包围四边形的轴对齐矩形，可选择缩放
      * @details 从任意四边形创建轴对齐的包围矩形
      */
-    static inline cv::Rect2f get_ROI(bbox_t &armor, float coefficient = 1.0f)
-    {
+    static inline cv::Rect2f get_ROI(bbox_t &armor, float coefficient = 1.0f) {
         auto center = points_center(armor.pts);
-        
+
         // 找到包围框的宽度和高度
         auto w = std::max({armor.pts[0].x, armor.pts[1].x, armor.pts[2].x, armor.pts[3].x}) -
                  std::min({armor.pts[0].x, armor.pts[1].x, armor.pts[2].x, armor.pts[3].x});
         auto h = std::max({armor.pts[0].y, armor.pts[1].y, armor.pts[2].y, armor.pts[3].y}) -
                  std::min({armor.pts[0].y, armor.pts[1].y, armor.pts[2].y, armor.pts[3].y});
-        
+
         return cv::Rect2f(center.x - w / 2, center.y - h / 2, w * coefficient, h * coefficient);
     }
 
@@ -184,24 +171,22 @@ namespace mathutils
      * @details 使用布雷齐施耐德公式计算一般四边形面积
      *          适用于凸四边形的面积计算，用于装甲板大小评估
      */
-    static inline double get_bbox_size(const bbox_t &bx)
-    {
+    static inline double get_bbox_size(const bbox_t &bx) {
         // 计算四条边长
         auto bx_a = sqrt(pow(bx.pts[0].x - bx.pts[1].x, 2) + pow(bx.pts[0].y - bx.pts[1].y, 2));
         auto bx_b = sqrt(pow(bx.pts[1].x - bx.pts[2].x, 2) + pow(bx.pts[1].y - bx.pts[2].y, 2));
         auto bx_c = sqrt(pow(bx.pts[2].x - bx.pts[3].x, 2) + pow(bx.pts[2].y - bx.pts[3].y, 2));
         auto bx_d = sqrt(pow(bx.pts[3].x - bx.pts[0].x, 2) + pow(bx.pts[3].y - bx.pts[0].y, 2));
-        
+
         // 布雷齐施耐德公式的半周长
         auto bx_z = (bx_a + bx_b + bx_c + bx_d) / 2;
-        
+
         // 使用布雷齐施耐德公式计算面积（假设为凸四边形）
         auto bx_size = 2 * sqrt((bx_z - bx_a) * (bx_z - bx_b) * (bx_z - bx_c) * (bx_z - bx_d));
         return bx_size;
     }
 
-    static inline Eigen::Vector3d xyz2ypd(const Eigen::Vector3d & xyz)
-    {
+    static inline Eigen::Vector3d xyz2ypd(const Eigen::Vector3d &xyz) {
         auto x = xyz[0], y = xyz[1], z = xyz[2];
         auto yaw = std::atan2(y, x);
         auto pitch = std::atan2(z, std::sqrt(x * x + y * y));
@@ -209,12 +194,11 @@ namespace mathutils
         return {yaw, pitch, distance};
     }
 
-    static inline double limit_rad(double angle)
-    {
+    static inline double limit_rad(double angle) {
         if (!std::isfinite(angle)) return std::numeric_limits<double>::quiet_NaN();
         const double result = std::remainder(angle, 2.0 * CV_PI);
         return result <= -CV_PI ? result + 2.0 * CV_PI : result;
     }
-}
+} // namespace mathutils
 
 #endif // PREDICT_MATH_TOOLS_H

@@ -16,9 +16,9 @@ if(INFERENCE_BACKEND STREQUAL "TRT")
     find_package(CUDA REQUIRED)
     include_directories(${CUDA_INCLUDE_DIRS})
     aux_source_directory(TensorRT trt_src)
-    
+
     add_library(detect OBJECT preprocess_submodule.cpp corner_refine_submodule.cpp detect_submodule.cpp armor_corner_optimizer.cpp ${trt_src})
-    
+
     if(DEFINED ENV{TRT_PATH})
         FILE(GLOB TRT_LIBS "$ENV{TRT_PATH}/lib/libnv*.so")
         target_include_directories(detect PRIVATE $ENV{TRT_PATH}/include)
@@ -26,18 +26,25 @@ if(INFERENCE_BACKEND STREQUAL "TRT")
     else()
         FILE(GLOB TRT_LIBS "/usr/lib/aarch64-linux-gnu/libnv*.so")
     endif()
-    
+
     target_link_libraries(detect ${OpenCV_LIBS} ${CUDA_LIBRARIES} ${TRT_LIBS})
     target_compile_definitions(detect PRIVATE INFERENCE_BACKEND_TYPE=2)
 
 elseif(INFERENCE_BACKEND STREQUAL "ONNX")
-    include_directories(/usr/local/include)
+    set(ONNXRUNTIME_ROOT "" CACHE PATH "ONNX Runtime installation directory")
+    find_path(ONNXRUNTIME_INCLUDE_DIR onnxruntime_cxx_api.h
+        HINTS "${ONNXRUNTIME_ROOT}/include" /usr/local/include)
+    find_library(ONNXRUNTIME_LIBRARY onnxruntime
+        HINTS "${ONNXRUNTIME_ROOT}/lib" /usr/local/lib)
+    if(NOT ONNXRUNTIME_INCLUDE_DIR OR NOT ONNXRUNTIME_LIBRARY)
+        message(FATAL_ERROR "ONNX Runtime not found; set ONNXRUNTIME_ROOT to its installation")
+    endif()
     aux_source_directory(ONNX onnx_src)
 
     add_library(detect OBJECT preprocess_submodule.cpp corner_refine_submodule.cpp detect_submodule.cpp armor_corner_optimizer.cpp ${onnx_src})
 
-    target_link_libraries(detect ${OpenCV_LIBS} onnxruntime)
-    target_link_directories(detect PUBLIC /usr/local/lib)
+    target_include_directories(detect PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
+    target_link_libraries(detect ${OpenCV_LIBS} "${ONNXRUNTIME_LIBRARY}")
     target_compile_definitions(detect PRIVATE INFERENCE_BACKEND_TYPE=1)
 
 elseif(INFERENCE_BACKEND STREQUAL "AXCL")

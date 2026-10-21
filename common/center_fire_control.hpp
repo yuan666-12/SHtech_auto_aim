@@ -48,7 +48,13 @@ struct Config {
 struct Hit {
     bool inside=false;
     int armor=-1;
-    double flight_s=0, lateral_m=0, vertical_m=0;
+    double flight_s=NAN, lateral_m=NAN, vertical_m=NAN;
+    bool crossed=false, front=false;
+};
+struct Evaluation {
+    Hit hit;
+    const char* reason="not_evaluated";
+    double half_width_m=NAN, half_height_m=NAN;
 };
 inline bool valid(const Snapshot& s,Clock::time_point now) {
     if(!s.valid || s.state_time==Clock::time_point{} ||
@@ -78,6 +84,7 @@ inline Hit intersect(const Snapshot& s,Clock::time_point now,
     const double age=std::chrono::duration<double>(now-s.state_time).count()+s.release_delay_s;
     const double half_width=c.width_m/2-c.margin_x_m;
     const double half_height=c.height_m/2-c.margin_z_m;
+    double closest_score=INFINITY;
     struct Sample { double plane,side,height,facing; };
     const auto at=[&](double t,int i) {
         const double tau=age+t;
@@ -93,7 +100,7 @@ inline Hit intersect(const Snapshot& s,Clock::time_point now,
                       vz*t-.5*gravity*t*t-az,nx*dx+ny*dy};
     };
     // Bound work at the 5 ms TX boundary. A two-second flight horizon exceeds
-    // the deployed 10 m/s Hero's normal low trajectory at the competition range.
+    // the Hero's normal low trajectory at the competition range.
     constexpr double step=.005;
     for(int i=0;i<4;++i) {
         double left=0;auto a=at(0,i);
@@ -107,10 +114,22 @@ inline Hit intersect(const Snapshot& s,Clock::time_point now,
                     else { lo=mid;fl=fm; }
                 }
                 const double t=(lo+hi)/2;const auto hit=at(t,i);
-                if(t>1e-6 && hit.facing>1e-6 &&
-                   std::abs(hit.side)<=half_width && std::abs(hit.height)<=half_height &&
-                   (!out.inside || t<out.flight_s))
-                    out={true,i,t,hit.side,hit.height};
+                if(t>1e-6) {
+                    const bool front=hit.facing>1e-6;
+                    const bool inside=front && std::abs(hit.side)<=half_width &&
+                        std::abs(hit.height)<=half_height;
+                    const double score=std::max(std::abs(hit.side)/half_width,
+                                                std::abs(hit.height)/half_height);
+                    // Preserve earliest valid hit. On a miss retain the closest
+                    // front-face plane crossing for diagnostics only.
+                    if((inside && (!out.inside || t<out.flight_s)) ||
+                       (!inside && !out.inside &&
+                        (!out.crossed || (front && !out.front) ||
+                         (front==out.front && score<closest_score)))) {
+                        out={inside,i,t,hit.side,hit.height,true,front};
+                        closest_score=score;
+                    }
+                }
             }
             left=right;a=b;
         }
@@ -126,23 +145,38 @@ class Window {
 public:
     explicit Window(Config c=Config::from_environment()):config_(c) {}
     const Config& config() const { return config_; }
-    bool evaluate(const Snapshot& s,Clock::time_point now,double yaw,double pitch,int id) {
-        if(!config_.valid || !valid(s,now) || id==0) return false;
+    bool evaluate(const Snapshot& s,Clock::time_point now,double yaw,double pitch,int id,
+                  Evaluation* diagnostic=nullptr) {
+        if(diagnostic) *diagnostic={};
+        if(diagnostic && config_.valid) {
+            diagnostic->half_width_m=config_.width_m/2-config_.margin_x_m;
+            diagnostic->half_height_m=config_.height_m/2-config_.margin_z_m;
+        }
+        const auto result=[&](const char* reason,bool fire=false) {
+            if(diagnostic) diagnostic->reason=reason;
+            return fire;
+        };
+        if(!config_.valid) return result("invalid_config");
+        if(!valid(s,now)) return result("invalid_model");
+        if(id==0) return result("no_target");
         if(id!=target_id_) { target_id_=id;latched_=false;outside_since_={}; }
         const auto hit=intersect(s,now,yaw,pitch,config_);
+        if(diagnostic) diagnostic->hit=hit;
         if(!hit.inside) {
             if(outside_since_==Clock::time_point{}) outside_since_=now;
             if(std::chrono::duration<double,std::milli>(now-outside_since_).count()>=config_.rearm_ms)
                 latched_=false;
-            return false;
+            return result(!hit.crossed?"no_plane_crossing":
+                          !hit.front?"back_face":"outside_rectangle");
         }
         outside_since_={};
-        if(latched_) return false;
+        if(latched_) return result("window_consumed");
         latched_=true; // Even a cooldown-blocked entry cannot queue a late shot.
         if(last_shot_!=Clock::time_point{} &&
-           std::chrono::duration<double>(now-last_shot_).count()<s.shot_interval_s) return false;
+           std::chrono::duration<double>(now-last_shot_).count()<s.shot_interval_s)
+            return result("shot_interval");
         last_shot_=now;
-        return true;
+        return result("ready",true);
     }
 };
 } // namespace center_fire

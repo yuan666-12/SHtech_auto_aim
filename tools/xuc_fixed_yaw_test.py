@@ -35,6 +35,39 @@ def control_packet(yaw, pitch):
     struct.pack_into('<H', packet, 29, crc16(packet[:29]))
     return bytes(packet)
 
+class Receiver:
+    def __init__(self):
+        self.latest = None
+        self.last_rx = 0.0
+        self.rx_count = 0
+        self.crc_fail = 0
+        self.buffer = bytearray()
+
+    def receive(self, fd, record):
+        while select.select([fd], [], [], 0)[0]:
+            data = os.read(fd, 4096)
+            if not data:
+                raise RuntimeError('serial disconnected')
+            self.buffer.extend(data)
+        while len(self.buffer) >= 28:
+            if self.buffer[0] != 0x5a:
+                del self.buffer[0]
+                continue
+            packet = bytes(self.buffer[:28])
+            if crc16(packet[:26]) != int.from_bytes(packet[26:28], 'little'):
+                self.crc_fail += 1
+                del self.buffer[0]
+                continue
+            del self.buffer[:28]
+            roll, pitch, yaw = struct.unpack_from('<3f', packet, 2)
+            if not all(math.isfinite(v) for v in (roll, pitch, yaw)):
+                raise RuntimeError('invalid RX attitude')
+            self.latest = (packet[1], roll, pitch, yaw)
+            self.last_rx = time.monotonic()
+            self.rx_count += 1
+            record('RX flags=%02X fire_mode=%d roll=%.6f pitch=%.6f yaw=%.6f raw=%s' % (packet[1], (packet[1] >> 7) & 1, roll, pitch, yaw, packet.hex(' ')))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--device', default=DEVICE)
@@ -61,40 +94,14 @@ def main():
         signal.signal(sig, stop)
     fd = None
     old = None
-    tx_count = rx_count = crc_fail = 0
-    latest = None
-    last_rx = 0.0
-    buffer = bytearray()
+    tx_count = 0
+    receiver = Receiver()
     with log_path.open('x', buffering=1) as log:
         def record(message, terminal=False):
             log.write(datetime.datetime.now().isoformat(timespec='milliseconds') + ' ' + message + '\n')
             if terminal:
                 print(message, flush=True)
         print('LOG=' + str(log_path), flush=True)
-        def receive():
-            nonlocal latest, last_rx, rx_count, crc_fail
-            while select.select([fd], [], [], 0)[0]:
-                data = os.read(fd, 4096)
-                if not data:
-                    raise RuntimeError('serial disconnected')
-                buffer.extend(data)
-            while len(buffer) >= 28:
-                if buffer[0] != 0x5a:
-                    del buffer[0]
-                    continue
-                packet = bytes(buffer[:28])
-                if crc16(packet[:26]) != int.from_bytes(packet[26:28], 'little'):
-                    crc_fail += 1
-                    del buffer[0]
-                    continue
-                del buffer[:28]
-                roll, pitch, yaw = struct.unpack_from('<3f', packet, 2)
-                if not all(math.isfinite(v) for v in (roll, pitch, yaw)):
-                    raise RuntimeError('invalid RX attitude')
-                latest = (packet[1], roll, pitch, yaw)
-                last_rx = time.monotonic()
-                rx_count += 1
-                record('RX flags=%02X fire_mode=%d roll=%.6f pitch=%.6f yaw=%.6f raw=%s' % (packet[1], (packet[1] >> 7) & 1, roll, pitch, yaw, packet.hex(' ')))
         try:
             fd = os.open(args.device, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
             fcntl.ioctl(fd, termios.TIOCEXCL)
@@ -111,26 +118,26 @@ def main():
             record('ARMED wait=%.1fs absolute_yaw=%s absolute_pitch=%s fire=0; no detection; waiting for fresh fire_mode=1' % (args.wait, yaw_request, pitch_request), True)
             deadline = time.monotonic() + args.wait
             while not stopped and time.monotonic() < deadline:
-                receive()
-                if latest and time.monotonic() - last_rx < 0.1 and latest[0] & 0x80:
+                receiver.receive(fd, record)
+                if receiver.latest and time.monotonic() - receiver.last_rx < 0.1 and receiver.latest[0] & 0x80:
                     break
                 time.sleep(0.005)
             else:
                 raise RuntimeError('cancelled or self-aim mode wait expired')
-            yaw = args.yaw if args.yaw is not None else (latest[3] if args.pitch is not None else 0.0)
-            pitch = latest[2] if args.pitch is None else args.pitch
+            yaw = args.yaw if args.yaw is not None else (receiver.latest[3] if args.pitch is not None else 0.0)
+            pitch = receiver.latest[2] if args.pitch is None else args.pitch
             if not 0 <= pitch <= 43:
                 raise RuntimeError('starting pitch outside [0,43], refusing control')
             packet = control_packet(yaw, pitch)
-            record('START rx_yaw=%.3f target_yaw=%.3f fixed_pitch=%.3f duration=%.1fs' % (latest[3], yaw, pitch, args.duration), True)
+            record('START rx_yaw=%.3f target_yaw=%.3f fixed_pitch=%.3f duration=%.1fs' % (receiver.latest[3], yaw, pitch, args.duration), True)
             start = next_tick = time.monotonic()
             next_report = start
             while not stopped and time.monotonic() - start < args.duration:
-                receive()
+                receiver.receive(fd, record)
                 now = time.monotonic()
-                if now - last_rx > 0.1:
+                if now - receiver.last_rx > 0.1:
                     raise RuntimeError('RX stale >100ms; stopped sending')
-                if not latest[0] & 0x80:
+                if not receiver.latest[0] & 0x80:
                     raise RuntimeError('fire_mode=0; stopped sending')
                 written = os.write(fd, packet)
                 if written != 31:
@@ -138,7 +145,7 @@ def main():
                 tx_count += 1
                 record('TX t=%.6f yaw=%.6f pitch=%.6f yaw_diff=0 pitch_diff=0 distance=0.4 fire=0 written=31 raw=%s' % (now - start, yaw, pitch, packet.hex(' ')))
                 if now >= next_report:
-                    record('STATUS t=%.3f target_yaw=%.3f actual_yaw=%.3f fixed_pitch=%.3f actual_pitch=%.3f TX=%d' % (now - start, yaw, latest[3], pitch, latest[2], tx_count), True)
+                    record('STATUS t=%.3f target_yaw=%.3f actual_yaw=%.3f fixed_pitch=%.3f actual_pitch=%.3f TX=%d' % (now - start, yaw, receiver.latest[3], pitch, receiver.latest[2], tx_count), True)
                     next_report = now + 0.5
                 next_tick += 0.005
                 time.sleep(max(0, next_tick - time.monotonic()))
@@ -153,7 +160,8 @@ def main():
                     fcntl.ioctl(fd, termios.TIOCNXCL)
                 finally:
                     os.close(fd)
-            record('CLOSED RX=%d TX=%d CRC_fail_candidates=%d' % (rx_count, tx_count, crc_fail), True)
+            record('CLOSED RX=%d TX=%d CRC_fail_candidates=%d' % (receiver.rx_count, tx_count, receiver.crc_fail), True)
+
 
 if __name__ == '__main__':
     main()

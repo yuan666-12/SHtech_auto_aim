@@ -3,7 +3,7 @@
  * @brief 坐标变换模块 - 处理相机、IMU和世界坐标系之间的转换与PnP求解
  * @author Cao Jingyan
  * @date 2025/11/15
- * 
+ *
  * 该模块负责：
  * 1. 管理相机内参和外参
  * 2. 执行PnP算法进行位姿估计
@@ -31,11 +31,9 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/eigen.hpp>
 
-namespace mathutils
-{
+namespace mathutils {
     /// @brief 三维位置向量类型别名，使用Eigen::Vector3d
     using Pos3D = Eigen::Vector3d;
-
 
     /**
      * @brief 小装甲板的3D模型坐标点
@@ -43,43 +41,36 @@ namespace mathutils
      *          角点顺序：左上、左下、右下、右上
      *          尺寸：13.5cm × 5.6cm
      */
-    inline const std::vector<cv::Point3d> pw_blue_small = {
-                {-0.0675, -0.028, 0.},  // 左上角点
-                {-0.0675, 0.028, 0.},   // 左下角点
-                {0.0675, 0.028, 0.},    // 右下角点
-                {0.0675, -0.028, 0.}};  // 右上角点
+    inline const std::vector<cv::Point3d> pw_blue_small = {{-0.0675, -0.028, 0.}, // 左上角点
+                                                           {-0.0675, 0.028, 0.},  // 左下角点
+                                                           {0.0675, 0.028, 0.},   // 右下角点
+                                                           {0.0675, -0.028, 0.}}; // 右上角点
 
-    inline const std::vector<cv::Point3d> pw_red_small = {
-                {-0.0675, -0.028, 0.},  // 左上角点
-                {-0.0675, 0.028, 0.},   // 左下角点
-                {0.0675, 0.028, 0.},    // 右下角点
-                {0.0675, -0.028, 0.}};  // 右上角点
+    inline const std::vector<cv::Point3d> pw_red_small = {{-0.0675, -0.028, 0.}, // 左上角点
+                                                          {-0.0675, 0.028, 0.},  // 左下角点
+                                                          {0.0675, 0.028, 0.},   // 右下角点
+                                                          {0.0675, -0.028, 0.}}; // 右上角点
 
     // The deployed blue No. 3 test armor has a measured effective outline of
     // 135 mm x 125 mm, rather than the 135 mm x 56 mm competition small armor.
-inline const std::vector<cv::Point3d> pw_blue_3_test = {
-  {-0.0632, -0.0564, 0.},
-  {-0.0632,  0.0564, 0.},
-  { 0.0632,  0.0564, 0.},
-  { 0.0632, -0.0564, 0.}};
-    
+    inline const std::vector<cv::Point3d> pw_blue_3_test = {
+        {-0.0632, -0.0564, 0.}, {-0.0632, 0.0564, 0.}, {0.0632, 0.0564, 0.}, {0.0632, -0.0564, 0.}};
+
     /**
      * @brief 大装甲板的3D模型坐标点
      * @details 定义大装甲板四个角点在装甲板本地坐标系中的位置（单位：米）
      *          角点顺序：左上、左下、右下、右上
      *          尺寸：22.8cm × 5.6cm
      */
-    inline const std::vector<cv::Point3d> pw_blue_big = {
-                {-0.114, -0.028, 0.},   // 左上角点
-                {-0.114, 0.028, 0.},    // 左下角点
-                {0.114, 0.028, 0.},     // 右下角点
-                {0.114, -0.028, 0.}};   // 右上角点
+    inline const std::vector<cv::Point3d> pw_blue_big = {{-0.114, -0.028, 0.}, // 左上角点
+                                                         {-0.114, 0.028, 0.},  // 左下角点
+                                                         {0.114, 0.028, 0.},   // 右下角点
+                                                         {0.114, -0.028, 0.}}; // 右上角点
 
-    inline const std::vector<cv::Point3d> pw_red_big = {
-                {-0.114, -0.028, 0.},   // 左上角点
-                {-0.114, 0.028, 0.},    // 左下角点
-                {0.114, 0.028, 0.},     // 右下角点
-                {0.114, -0.028, 0.}};   // 右上角点
+    inline const std::vector<cv::Point3d> pw_red_big = {{-0.114, -0.028, 0.}, // 左上角点
+                                                        {-0.114, 0.028, 0.},  // 左下角点
+                                                        {0.114, 0.028, 0.},   // 右下角点
+                                                        {0.114, -0.028, 0.}}; // 右上角点
 
     /**
      * @class CoordTransformer
@@ -91,9 +82,8 @@ inline const std::vector<cv::Point3d> pw_blue_3_test = {
      *          - 世界坐标系 (World): 全局坐标系，以云台旋转点为原点的坐标系，欧拉角固定为0
      *          - 图像坐标系 (Image): 图像像素坐标系
      */
-    class CoordTransformer
-    {
-    private:
+    class CoordTransformer {
+      private:
         // === 单例模式相关 ===
         /// @brief 私有静态指针 - 单例实例
         static std::unique_ptr<CoordTransformer> instance_;
@@ -107,39 +97,42 @@ inline const std::vector<cv::Point3d> pw_blue_3_test = {
         Eigen::Vector3d T_camera2imu;
         // World origin is the stationary yaw/pitch pivot, not the moving IMU.
         Eigen::Vector3d T_pivot2imu = Eigen::Vector3d::Zero();
+
+        std::vector<cv::Point3d> armor_model(int armor_number, int color_id) const;
+
         void load_gimbal_geometry();
-        
+
         /// @brief 相机到IMU的旋转矩阵 [3x3]
         Eigen::Matrix3d R_camera2imu;
-        
+
         /// @brief 相机内参矩阵 [3x3] - 包含焦距fx,fy和主点坐标cx,cy
         Eigen::Matrix3d F;
-        
+
         /// @brief 相机畸变参数 [1x5] - 径向畸变k1,k2,k3和切向畸变p1,p2
         Eigen::Matrix<double, 1, 5> C;
-        
+
         // === 坐标变换参数 (OpenCV格式，用于文件读写和PnP算法) ===
         /// @brief 相机到IMU的平移向量 (OpenCV Mat格式)
         cv::Mat T_camera2imu_MAT;
-        
+
         /// @brief 相机到IMU的旋转矩阵 (OpenCV Mat格式)
         cv::Mat R_camera2imu_MAT;
-        
+
         /// @brief 相机内参矩阵 (OpenCV Mat格式)
         cv::Mat F_MAT;
-        
+
         /// @brief 相机畸变参数 (OpenCV Mat格式)
         cv::Mat C_MAT;
 
         // === 装甲板模型尺寸 (毫米) (支持实时调参) ===
         int pw_length = 135; // 小装甲板长度，单位毫米
-        int pw_width = 56; // 小装甲板宽度，单位毫米
-                      
+        int pw_width = 56;   // 小装甲板宽度，单位毫米
+
         /**
          * @brief 默认构造函数（私有）
          */
         explicit CoordTransformer(bool adjust_);
-        
+
         /**
          * @brief 带参数构造函数（私有）
          * @param camera_param 相机参数文件路径
@@ -150,12 +143,12 @@ inline const std::vector<cv::Point3d> pw_blue_3_test = {
          *          - K: 相机内参矩阵
          *          - D: 相机畸变参数
          */
-        explicit CoordTransformer(const std::string camera_param,  bool adjust_);
-                      
-    public:
+        explicit CoordTransformer(const std::string &camera_param, bool adjust_);
+
+      public:
         // === 禁止拷贝和赋值 ===
-        CoordTransformer(const CoordTransformer&) = delete;
-        void operator=(const CoordTransformer&) = delete;
+        CoordTransformer(const CoordTransformer &) = delete;
+        void operator=(const CoordTransformer &) = delete;
 
         /**
          * @brief 显式初始化单例
@@ -164,7 +157,7 @@ inline const std::vector<cv::Point3d> pw_blue_3_test = {
          * @details 必须在 main/init 中调用一次，用于加载相机参数并创建单例实例
          *          如果已经初始化，再次调用将不会重复创建
          */
-        static void Init(const std::string& param_file, bool adjust);
+        static void Init(const std::string &param_file, bool adjust);
 
         /**
          * @brief 获取单例实例
@@ -172,7 +165,7 @@ inline const std::vector<cv::Point3d> pw_blue_3_test = {
          * @details 各个子模块通过此方法获取实例
          *          如果在 Init 之前调用，将终止程序（Fail Fast）
          */
-        static CoordTransformer& Get();
+        static CoordTransformer &Get();
 
         /**
          * @brief 销毁单例
@@ -192,10 +185,9 @@ inline const std::vector<cv::Point3d> pw_blue_3_test = {
          * @return bool 成功标志，true表示PnP求解成功，false表示失败
          * @details 通过PnP算法从2D图像点反推3D世界坐标，并计算装甲板朝向
          */
-        bool pnp_get_measurement(const cv::Point2f (&p)[4], const int &armor_number, 
-                                                    const int &color_id, const float &attitude_yaw, 
-                                                    const Eigen::Matrix3d &R_world2imu,
-                                                    float &yaw_in_camera, Eigen::Vector4d &measurement);
+        bool pnp_get_measurement(const cv::Point2f (&p)[4], const int &armor_number, const int &color_id,
+                                 const float &attitude_yaw, const Eigen::Matrix3d &R_world2imu, float &yaw_in_camera,
+                                 Eigen::Vector4d &measurement);
         // === 坐标变换内联函数 ===
         /**
          * @brief 相机坐标系 → 世界坐标系坐标变换
@@ -205,10 +197,8 @@ inline const std::vector<cv::Point3d> pw_blue_3_test = {
          * @details 变换链：Camera → IMU → World
          *          pc -(R_camera2imu,T_camera2imu)-> pi -(R_world2imu^T)-> pw
          */
-        inline Pos3D pc_to_pw(const Pos3D &pc, const Eigen::Matrix3d &R_world2imu)
-        {
-            return R_world2imu.transpose() *
-                   (R_camera2imu * pc + T_camera2imu + T_pivot2imu);
+        inline Pos3D pc_to_pw(const Pos3D &pc, const Eigen::Matrix3d &R_world2imu) {
+            return R_world2imu.transpose() * (R_camera2imu * pc + T_camera2imu + T_pivot2imu);
         }
 
         /**
@@ -219,10 +209,8 @@ inline const std::vector<cv::Point3d> pw_blue_3_test = {
          * @details 变换链：World → IMU → Camera
          *          pw -(R_world2imu)-> pi -(R_camera2imu^T,T_camera2imu)-> pc
          */
-        inline Pos3D pw_to_pc(const Pos3D &pw, const Eigen::Matrix3d &R_world2imu)
-        {
-            return R_camera2imu.transpose() *
-                   (R_world2imu * pw - T_pivot2imu - T_camera2imu);
+        inline Pos3D pw_to_pc(const Pos3D &pw, const Eigen::Matrix3d &R_world2imu) {
+            return R_camera2imu.transpose() * (R_world2imu * pw - T_pivot2imu - T_camera2imu);
         }
 
         /**
@@ -232,8 +220,7 @@ inline const std::vector<cv::Point3d> pw_blue_3_test = {
          * @return Pos3D IMU坐标系中的3D点
          * @details 直接通过旋转矩阵变换，不包含平移
          */
-        inline Pos3D pw_to_pi(const Pos3D &pw, const Eigen::Matrix3d &R_world2imu)
-        {
+        inline Pos3D pw_to_pi(const Pos3D &pw, const Eigen::Matrix3d &R_world2imu) {
             return R_world2imu * pw - T_pivot2imu;
         }
 
@@ -245,20 +232,18 @@ inline const std::vector<cv::Point3d> pw_blue_3_test = {
          *          投影公式：[u, v, w]^T = F * [X, Y, Z]^T, 像素坐标 = [u/w, v/w]
          *          注意：返回值需要归一化 (除以Z坐标) 得到真实像素坐标
          */
-        inline Pos3D pc_to_pu(const Pos3D &pc)
-        {
+        inline Pos3D pc_to_pu(const Pos3D &pc) {
             if (!pc.allFinite() || pc.z() <= 0.0) {
                 return Pos3D::Constant(std::numeric_limits<double>::quiet_NaN());
             }
             std::vector<cv::Point3d> object{{pc.x(), pc.y(), pc.z()}};
             std::vector<cv::Point2d> pixels;
-            cv::projectPoints(object, cv::Vec3d::all(0), cv::Vec3d::all(0),
-                              F_MAT, C_MAT, pixels);
+            cv::projectPoints(object, cv::Vec3d::all(0), cv::Vec3d::all(0), F_MAT, C_MAT, pixels);
             return {pixels[0].x, pixels[0].y, 1.0};
         }
-        
+
     }; // class CoordTransformer
 
-} // namespace predict
+} // namespace mathutils
 
 #endif // PREDICT_COORD_TRANSFORMER_H

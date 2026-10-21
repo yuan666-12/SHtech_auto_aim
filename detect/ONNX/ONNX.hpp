@@ -29,7 +29,7 @@ private:
     std::vector<const char*> input_names_;
     std::vector<const char*> output_names_;
     std::vector<int64_t> input_shape_;
-    
+
     static constexpr int input_w_ = 640;
     static constexpr int input_h_ = 512;
 };

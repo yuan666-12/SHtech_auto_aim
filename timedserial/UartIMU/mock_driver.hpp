@@ -18,28 +18,28 @@
 
 /**
  * @brief 模拟串口驱动实现
- * 
+ *
  * 用途：
  * - 测试和开发时不依赖真实硬件
  * - 提供固定的初始状态数据
  * - 满足 TimedSerial 模块的状态初始化需求
- * 
+ *
  * 特性：
  * - 启动时发送一次固定的姿态和状态数据
  * - 不接收任何数据，transmit_cmd 为空操作
  * - 轻量级，无实际硬件交互
  */
-class MockDriver : public SerialInterface 
+class MockDriver : public SerialInterface
 {
 private:
     // 保存两个独立的回调
     AttitudeCallback attitude_cb_;
     RobotStatusCallback status_cb_;
-    
+
     // 固定的初始状态数据
     Attitude initial_attitude_;
     RobotStatus initial_status_;
-    
+
     std::atomic<bool> initialized_{false};
 
 public:
@@ -58,7 +58,7 @@ public:
         }
         // initial_attitude_ 使用 Attitude 类的默认初始值（水平姿态）
     }
-    
+
     /**
      * @brief 构造函数 - 使用自定义初始状态
      * @param att 初始姿态
@@ -68,7 +68,7 @@ public:
         : initial_attitude_(att), initial_status_(status)
     {
     }
-    
+
     // 实现 SerialInterface 的注册接口
     void set_attitude_callback(AttitudeCallback cb) override { attitude_cb_ = cb; }
     void set_robot_status_callback(RobotStatusCallback cb) override { status_cb_ = cb; }
@@ -80,32 +80,32 @@ public:
         initialized_ = true;
         return true;
     }
-    
+
     void start() override
     {
         LOGM_S("[MockDriver] Starting mock driver - sending initial data");
-        
+
         // 发送一次初始数据
         if (attitude_cb_) {
             attitude_cb_(initial_attitude_);
-            LOGM_S("[MockDriver] Sent initial attitude: yaw=%.2f, pitch=%.2f", 
+            LOGM_S("[MockDriver] Sent initial attitude: yaw=%.2f, pitch=%.2f",
                    initial_attitude_.yaw(), initial_attitude_.pitch());
         }
-        
+
         if (status_cb_) {
             status_cb_(initial_status_);
-            LOGM_S("[MockDriver] Sent initial status: enemy_color=%d, speed=%.2f", 
-                   static_cast<int>(initial_status_.enemy_color), 
+            LOGM_S("[MockDriver] Sent initial status: enemy_color=%d, speed=%.2f",
+                   static_cast<int>(initial_status_.enemy_color),
                    initial_status_.robot_speed_mps);
         }
     }
-    
+
     void close() override
     {
         LOGM_S("[MockDriver] Closing mock driver");
         initialized_ = false;
     }
-    
+
     // 实现发送接口 - 空操作
     void transmit_cmd(float yaw, float yaw_spd, float pitch, float pitch_spd, float yaw_acc, float pitch_acc, float dist, uint8_t shoot = 1, uint8_t target_id = 0) override
     {

@@ -11,19 +11,15 @@
 #include <stdexcept>
 #include "hero_diagnostics.hpp"
 
-namespace mathutils
-{
+namespace mathutils {
     // 定义静态成员变量
     std::unique_ptr<CoordTransformer> CoordTransformer::instance_ = nullptr;
 
-    void CoordTransformer::load_gimbal_geometry()
-    {
-        cv::FileStorage geometry(PROJECT_DIR "/asset/gimbal_geometry_hero.yml",
-                                 cv::FileStorage::READ);
+    void CoordTransformer::load_gimbal_geometry() {
+        cv::FileStorage geometry(PROJECT_DIR "/asset/gimbal_geometry_hero.yml", cv::FileStorage::READ);
         cv::Mat offset;
         geometry["T_pivot2imu"] >> offset;
-        if (!geometry.isOpened() || offset.rows != 3 || offset.cols != 1 ||
-            !cv::checkRange(offset)) {
+        if (!geometry.isOpened() || offset.rows != 3 || offset.cols != 1 || !cv::checkRange(offset)) {
             throw std::runtime_error("invalid Hero pivot-to-IMU geometry");
         }
         cv::cv2eigen(offset, T_pivot2imu);
@@ -32,21 +28,20 @@ namespace mathutils
     /**
      * @brief 默认构造函数 - 初始化所有变换矩阵为零矩阵
      */
-    CoordTransformer::CoordTransformer(bool adjust_)
-    {
+    CoordTransformer::CoordTransformer(bool adjust_) {
         load_gimbal_geometry();
         // 初始化相机到IMU的平移向量 (3x1)
         T_camera2imu_MAT = cv::Mat::zeros(3, 1, CV_64FC1);
-        
+
         // 初始化相机到IMU的旋转矩阵 (3x3)
         R_camera2imu_MAT = cv::Mat::zeros(3, 3, CV_64FC1);
-        
+
         // 初始化相机内参矩阵 (3x3)
         F_MAT = cv::Mat::zeros(3, 3, CV_64FC1);
-        
+
         // 初始化相机畸变参数 (1x5)
         C_MAT = cv::Mat::zeros(1, 5, CV_64FC1);
-        
+
         // 将OpenCV矩阵转换为Eigen矩阵，便于后续数学运算
         cv::cv2eigen(T_camera2imu_MAT, T_camera2imu);
         cv::cv2eigen(R_camera2imu_MAT, R_camera2imu);
@@ -57,7 +52,7 @@ namespace mathutils
 
         if (adjust) {
             autoaim_gui::namedWindow("transformer trackbar", cv::WINDOW_AUTOSIZE);
-        
+
             autoaim_gui::createTrackbar("pw_length", "transformer trackbar", &pw_length, 250, 0);
             autoaim_gui::createTrackbar("pw_width", "transformer trackbar", &pw_width, 250, 0);
         }
@@ -68,19 +63,18 @@ namespace mathutils
      * @param camera_param yml文件路径
      * @details 从YAML文件中读取相机内参、畸变参数和相机-IMU外参
      */
-    CoordTransformer::CoordTransformer(const std::string camera_param, bool adjust_)
-    {
+    CoordTransformer::CoordTransformer(const std::string &camera_param, bool adjust_) {
         load_gimbal_geometry();
         // 打开相机参数文件
         cv::FileStorage fin(camera_param, cv::FileStorage::READ);
-        
+
         // 读取相机到IMU的外参（平移向量和旋转矩阵）
-        fin["T_c2i"] >> T_camera2imu_MAT;  // 相机到IMU的平移向量
-        fin["R_c2i"] >> R_camera2imu_MAT;  // 相机到IMU的旋转矩阵
+        fin["T_c2i"] >> T_camera2imu_MAT; // 相机到IMU的平移向量
+        fin["R_c2i"] >> R_camera2imu_MAT; // 相机到IMU的旋转矩阵
 
         // 读取相机内参
-        fin["K"] >> F_MAT;  // 相机内参矩阵 (焦距、主点等)
-        fin["D"] >> C_MAT;  // 相机畸变参数 (径向畸变、切向畸变)
+        fin["K"] >> F_MAT; // 相机内参矩阵 (焦距、主点等)
+        fin["D"] >> C_MAT; // 相机畸变参数 (径向畸变、切向畸变)
 
         // 将OpenCV格式转换为Eigen格式，便于数学运算
         cv::cv2eigen(T_camera2imu_MAT, T_camera2imu);
@@ -92,7 +86,7 @@ namespace mathutils
 
         if (adjust) {
             autoaim_gui::namedWindow("transformer trackbar", cv::WINDOW_AUTOSIZE);
-        
+
             autoaim_gui::createTrackbar("pw_length", "transformer trackbar", &pw_length, 250, 0);
             autoaim_gui::createTrackbar("pw_width", "transformer trackbar", &pw_width, 250, 0);
         }
@@ -101,8 +95,7 @@ namespace mathutils
     /**
      * @brief 显式初始化单例
      */
-    void CoordTransformer::Init(const std::string& param_file, bool adjust)
-    {
+    void CoordTransformer::Init(const std::string &param_file, bool adjust) {
         if (!instance_) {
             instance_ = std::unique_ptr<CoordTransformer>(new CoordTransformer(param_file, adjust));
         }
@@ -111,8 +104,7 @@ namespace mathutils
     /**
      * @brief 获取单例实例
      */
-    CoordTransformer& CoordTransformer::Get()
-    {
+    CoordTransformer &CoordTransformer::Get() {
         if (!instance_) {
             // 防御性编程：如果未初始化就调用，直接报错终止
             std::cerr << "[FATAL] CoordTransformer accessed before Init!" << std::endl;
@@ -124,8 +116,7 @@ namespace mathutils
     /**
      * @brief 销毁单例
      */
-    void CoordTransformer::Destroy()
-    {
+    void CoordTransformer::Destroy() {
         instance_.reset();
     }
 
@@ -141,159 +132,93 @@ namespace mathutils
      * @return bool 成功标志，true表示PnP求解成功，false表示失败
      * @details 通过PnP算法从2D图像点反推3D世界坐标，并计算装甲板朝向
      */
-    bool CoordTransformer::pnp_get_measurement(const cv::Point2f (&p)[4], const int &armor_number, 
-                                                const int &color_id, const float &attitude_yaw, 
-                                                const Eigen::Matrix3d &R_world2imu,
-                                                float &yaw_in_camera, Eigen::Vector4d &measurement)
-    {
-        // 根据装甲板编号选择对应的3D模型尺寸
+    std::vector<cv::Point3d> CoordTransformer::armor_model(int armor_number, int color_id) const {
         std::vector<cv::Point3d> pw_cur;
         if (armor_policy::ignore_armor_id()) {
-            // Provincial mode uses the confirmed 135 x 56 mm geometry for every label.
             pw_cur = color_id == 0 ? pw_red_small : pw_blue_small;
-        }
-        else if (adjust) {
+        } else if (adjust) {
             double pw_x = pw_length / 1000.0 / 2.0;
             double pw_y = pw_width / 1000.0 / 2.0;
-
             std::vector<cv::Point3d> pw_temp = {
-                {-pw_x, -pw_y, 0.},  // 左上角点
-                {-pw_x, pw_y, 0.},   // 左下角点
-                {pw_x, pw_y, 0.},    // 右下角点
-                {pw_x, -pw_y, 0.}};  // 右上角点
-
+                {-pw_x, -pw_y, 0.}, {-pw_x, pw_y, 0.}, {pw_x, pw_y, 0.}, {pw_x, -pw_y, 0.}};
             pw_cur = pw_temp;
-        }
-        else {
+        } else {
             if (color_id == 0) {
                 if (armor_number == 0 || armor_number == 1 || armor_number == 8)
-                    pw_cur = pw_red_big;    // 大装甲板
+                    pw_cur = pw_red_big;
                 else
-                    pw_cur = pw_red_small;  // 小装甲板
-            }
-            else {
-            if (armor_number == 3 && std::getenv("AUTOAIM_BLUE3_TEST_TARGET") != nullptr)
-                pw_cur = pw_blue_3_test;
+                    pw_cur = pw_red_small;
+            } else {
+                if (armor_number == 3 && std::getenv("AUTOAIM_BLUE3_TEST_TARGET") != nullptr)
+                    pw_cur = pw_blue_3_test;
                 else if (armor_number == 0 || armor_number == 1 || armor_number == 8)
-                    pw_cur = pw_blue_big;    // 大装甲板
+                    pw_cur = pw_blue_big;
                 else
-                    pw_cur = pw_blue_small;  // 小装甲板
+                    pw_cur = pw_blue_small;
             }
         }
+        return pw_cur;
+    }
 
-        // for (int i = 0; i < 4; ++i) {
-        //     std::cout << p[i] << std::endl;
-        // }
-
-        // std::cout << "pw_cur: " << std::endl;
-        // for (const auto &pt : pw_cur) {
-        //     std::cout << pt << std::endl;
-        // }
-
-        // std::cout << "F_MAT: " << std::endl << F_MAT << std::endl;
-        // std::cout << "C_MAT: " << std::endl << C_MAT << std::endl;
-
-        // 将图像点转换为PnP算法需要的格式
+    bool CoordTransformer::pnp_get_measurement(const cv::Point2f (&p)[4], const int &armor_number, const int &color_id,
+                                               const float &attitude_yaw, const Eigen::Matrix3d &R_world2imu,
+                                               float &yaw_in_camera, Eigen::Vector4d &measurement) {
+        const auto pw_cur = armor_model(armor_number, color_id);
         std::vector<cv::Point2f> polygon(p, p + 4);
         for (const auto &point : polygon)
             if (!std::isfinite(point.x) || !std::isfinite(point.y)) return false;
-        if (!cv::isContourConvex(polygon) || std::abs(cv::contourArea(polygon)) < 16.0)
-            return false;
+        if (!cv::isContourConvex(polygon) || std::abs(cv::contourArea(polygon)) < 16.0) return false;
         std::vector<cv::Point2d> pu(p, p + 4);
-        // cv::Mat pu(4, 1, CV_32FC2, const_cast<cv::Point2f*>(p));
-
-        // PnP求解：从2D图像点和3D模型点求解相机位姿
-        cv::Mat rvec, tvec;  // 旋转向量和平移向量
+        cv::Mat rvec, tvec;
         bool success = cv::solvePnP(pw_cur, pu, F_MAT, C_MAT, rvec, tvec, false, cv::SOLVEPNP_IPPE);
-
         if (!success || !cv::checkRange(rvec) || !cv::checkRange(tvec)) {
             return false;
         }
         std::vector<cv::Point2d> reprojected;
-        cv::projectPoints(pw_cur,rvec,tvec,F_MAT,C_MAT,reprojected);
+        cv::projectPoints(pw_cur, rvec, tvec, F_MAT, C_MAT, reprojected);
         double squared_error = 0.0;
-        for (size_t i=0;i<pu.size();++i) {
-            const auto delta = pu[i]-reprojected[i];
+        for (size_t i = 0; i < pu.size(); ++i) {
+            const auto delta = pu[i] - reprojected[i];
             squared_error += delta.dot(delta);
         }
         const double rms = std::sqrt(squared_error / pu.size());
         if (!std::isfinite(rms) || rms > 5.0) {
-            const auto report = hero_log::permit(hero_log::Stream::Pnp,2);
+            const auto report = hero_log::permit(hero_log::Stream::Pnp, 2);
             if (report.emit) {
-                std::ostringstream text; text << "[PNP_REJECT] reprojection_rms_px=" << rms
-                    << " limit_px=5 seq=" << report.sequence << " skipped=" << report.skipped;
-                hero_log::append(text.str(),report.event);
+                std::ostringstream text;
+                text << "[PNP_REJECT] reprojection_rms_px=" << rms << " limit_px=5 seq=" << report.sequence
+                     << " skipped=" << report.skipped;
+                hero_log::append(text.str(), report.event);
             }
             return false;
         }
-
-        
-        // === 坐标变换过程 ===
-        // 获取装甲板中心在不同坐标系中的位置
-        Pos3D pc, pw, pi;  // 相机坐标系、世界坐标系、IMU坐标系
-        
-        cv::cv2eigen(tvec, pc);  // PnP得到的是相机坐标系中的位置
+        Pos3D pc, pw;
+        cv::cv2eigen(tvec, pc);
         if (!pc.allFinite() || pc.z() <= 0.0 || !R_world2imu.allFinite()) {
             return false;
         }
-
-        // std::cout << "T_camera2imu: " << T_camera2imu << std::endl;
-        // std::cout << "R_camera2imu: " << R_camera2imu << std::endl;
-        // std::cout << "R_world2imu: " << R_world2imu << std::endl;
-        
-        // 相机坐标系 -> IMU坐标系
-        pi = R_camera2imu * pc + T_camera2imu;
-
-        // IMU坐标系 -> 世界坐标系
         pw = pc_to_pw(pc, R_world2imu);
-
-        // === 计算装甲板四个角点的世界坐标 ===
         cv::Mat mat_R;
         Eigen::Matrix3d R;
-        cv::Rodrigues(rvec, mat_R);  // 旋转向量转旋转矩阵
+        cv::Rodrigues(rvec, mat_R);
         cv::cv2eigen(mat_R, R);
-
-        Pos3D p_a_w[4];  // 装甲板四角点世界坐标
-        Pos3D p_a_c[4];  // 装甲板四角点相机坐标
-
-        // 计算每个角点的3D坐标
-        for (int i = 0; i < 4; ++i)
-        {
-            Pos3D temp(pw_cur[i].x, pw_cur[i].y, pw_cur[i].z);  // 装甲板模型坐标
-            p_a_c[i] = R * temp + pc;  // 变换到相机坐标系
+        Pos3D p_a_c[4];
+        for (int i = 0; i < 4; ++i) {
+            Pos3D temp(pw_cur[i].x, pw_cur[i].y, pw_cur[i].z);
+            p_a_c[i] = R * temp + pc;
         }
-        
-        // === 计算装甲板法向量和朝向 ===
-        // 计算装甲板在相机坐标系中的方向向量
         Pos3D armor_v_x_c, armor_v_y_c, armor_v_z_c;
         armor_v_x_c = (p_a_c[0] - p_a_c[3]) + (p_a_c[1] - p_a_c[2]);
         armor_v_y_c = (p_a_c[1] - p_a_c[0]) + (p_a_c[2] - p_a_c[3]);
         armor_v_z_c = armor_v_x_c.cross(armor_v_y_c);
-
-        // 计算装甲板在相机坐标系中的偏航角
-        // 偏航轴是负Z轴，因此使用-armor_v_z_c[2]
-        // 正对装甲板的yaw_in_camera=0，绕世界坐标系z轴正方向旋转为负，相反为正
         yaw_in_camera = atan2(armor_v_z_c[0], -armor_v_z_c[2]);
-
         if (adjust)
             std::cout << pc[1] << std::endl << pc[0] << std::endl << pc[2] << std::endl << yaw_in_camera << std::endl;
-
-        // === 组装最终测量值 ===
-        // 测量值格式：[y坐标, x坐标, z坐标, 绝对偏航角]，该测量值对应于ekf的测量项
-        // 绝对朝向由法向量旋转到世界坐标后计算，范围 [-pi, pi]
-        // Transform the outward-facing normal as a direction (no translation).
-        // The tracker model is ya=yc-r*cos(theta), xa=xc-r*sin(theta).
-        const Pos3D normal_world =
-            R_world2imu.transpose() * R_camera2imu * armor_v_z_c;
-        if (!normal_world.allFinite() ||
-            normal_world.head<2>().squaredNorm() <= 1e-16) return false;
-        const double world_armor_yaw =
-            std::atan2(-normal_world.x(), -normal_world.y());
+        const Pos3D normal_world = R_world2imu.transpose() * R_camera2imu * armor_v_z_c;
+        if (!normal_world.allFinite() || normal_world.head<2>().squaredNorm() <= 1e-16) return false;
+        const double world_armor_yaw = std::atan2(-normal_world.x(), -normal_world.y());
         measurement << pw[1], pw[0], pw[2], world_armor_yaw;
-        (void)attitude_yaw; // Already included in R_world2imu.
-        // measurement << pw[1], pw[0], pw[2], yaw_in_camera - attitude_yaw;
-
+        (void)attitude_yaw;
         return true;
     }
-}
-
+} // namespace mathutils

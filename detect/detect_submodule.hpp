@@ -44,7 +44,7 @@ namespace detect
          * @param[in] parent     父任务指针，用于生命周期检查
          * @return  bool         返回 true 表示数据应该传递到下游，false 表示丢弃数据
          */
-        SubModuleResult process(std::shared_ptr<ThreadDataPack> data, 
+        SubModuleResult process(std::shared_ptr<ThreadDataPack> data,
                     const pipeline::BasicTask* parent) override;
 
     private:

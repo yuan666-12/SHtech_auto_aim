@@ -22,25 +22,25 @@ ONNX::ONNX(const std::string &model_path)
 {
     session_options_.SetIntraOpNumThreads(1);
     session_options_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-    
+
     session_ = std::make_unique<Ort::Session>(env_, model_path.c_str(), session_options_);
 
     Ort::AllocatorWithDefaultOptions allocator;
-    
+
     // ONNX Runtime 1.17+ API
     auto input_name_ptr = session_->GetInputNameAllocated(0, allocator);
     auto output_name_ptr = session_->GetOutputNameAllocated(0, allocator);
-    
+
     input_names_str_.push_back(std::string(input_name_ptr.get()));
     output_names_str_.push_back(std::string(output_name_ptr.get()));
-    
+
     input_names_.push_back(input_names_str_[0].c_str());
     output_names_.push_back(output_names_str_[0].c_str());
-    
+
     auto input_type_info = session_->GetInputTypeInfo(0);
     auto input_tensor_info = input_type_info.GetTensorTypeAndShapeInfo();
     input_shape_ = input_tensor_info.GetShape();
-    
+
     if (input_shape_[0] == -1) input_shape_[0] = 1;
 }
 
@@ -62,7 +62,7 @@ void ONNX::postprocess(const float* output_data, size_t output_count,
                        std::vector<bbox_t> &det, float scale_x, float scale_y) {
     det.clear();
     if (output_count == 0 || output_data == nullptr) return;
-    
+
     int num_boxes = static_cast<int>(output_count) / OUTPUT_DIM;
     if (num_boxes == 0) return;
 
@@ -166,7 +166,7 @@ void ONNX::operator()(const cv::Mat &src, std::vector<bbox_t> &det) {
         Ort::RunOptions{nullptr},
         input_names_.data(), &input_tensor, 1,
         output_names_.data(), 1);
-    
+
     Ort::Value& output_tensor = output_tensors[0];
 
     static bool shape_logged = false;

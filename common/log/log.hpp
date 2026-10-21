@@ -9,54 +9,43 @@
 #include <ctime>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <stdexcept>
 
-class Log
-{
-public:
-    Log operator=(Log &) = delete;
-    Log(std::string folder)
-    {
+class Log {
+  public:
+    Log(const Log &) = delete;
+    Log &operator=(const Log &) = delete;
+    Log(std::string folder) {
+        if (folder.empty()) throw std::invalid_argument("Log directory is empty");
         time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
         std::stringstream ss;
-        ss << std::put_time(std::localtime(&now), "%Y-%m-%d-%H:%M:%S");
+        ss << std::put_time(std::localtime(&now), "%Y-%m-%d-%H-%M-%S");
         mkdir(folder.c_str(), S_IRUSR | S_IWUSR | S_IXUSR | S_IRWXG | S_IRWXO);
-        if (folder[folder.length() - 1] != '/')
-        {
+        if (folder[folder.length() - 1] != '/') {
             folder = folder + "/";
         }
         std::string file = folder + ss.str() + ".txt";
         out = fopen(file.c_str(), "w");
-        if (!out)
-        {
-            printf("Open Log File Fail\n");
-            //throw "Open Log File Fail";
+        if (!out) {
+            throw std::runtime_error("Cannot open log file: " + file);
         }
     }
-    Log(void)
-    {
-        out = stdout;
-    }
-    ~Log(void)
-    {
-        if (out != stdout)
-        {
+    Log(void) { out = stdout; }
+    ~Log(void) {
+        if (out && out != stdout && out != stderr) {
             fclose(out);
             printf("Close Log File Success!\n");
         }
     }
-    void reopen(std::string file)
-    {
-        if (out != stdout)
-        {
+    void reopen(const std::string &file) {
+        FILE *replacement = fopen(file.c_str(), "w");
+        if (!replacement) throw std::runtime_error("Cannot reopen log file: " + file);
+        if (out && out != stdout && out != stderr) {
             fclose(out);
         }
-        out = fopen(file.c_str(), "w");
-        if (!out)
-        {
-            throw "Repen Log File Fail";
-        }
+        out = replacement;
     }
-    FILE *out;
+    FILE *out = stdout;
 };
 
 typedef Log *Log_t;
@@ -127,9 +116,11 @@ extern Log_t logfile;
 #define LOG_LINK_COLOR LINE_CODE WORD_BLUE
 #endif
 
-#define MLOG(tar, level, fmt, ...) fprintf((tar)->out, "%s " level fmt "\n", systime.getTimeStr().c_str(), ##__VA_ARGS__)
+#define MLOG(tar, level, fmt, ...)                                                                                     \
+    fprintf((tar)->out, "%s " level fmt "\n", systime.getTimeStr().c_str(), ##__VA_ARGS__)
 #define LOGM(tar, fmt, ...) MLOG((tar), STR_CTR(LOG_MSG_COLOR, "<MSG>: "), STR_CTR(LOG_MSG_COLOR, fmt), ##__VA_ARGS__)
-#define LOGW(tar, fmt, ...) MLOG((tar), STR_CTR(LOG_WARN_COLOR, "<WARN>: "), STR_CTR(LOG_WARN_COLOR, fmt), ##__VA_ARGS__)
+#define LOGW(tar, fmt, ...)                                                                                            \
+    MLOG((tar), STR_CTR(LOG_WARN_COLOR, "<WARN>: "), STR_CTR(LOG_WARN_COLOR, fmt), ##__VA_ARGS__)
 #define LOGE(tar, fmt, ...) MLOG((tar), STR_CTR(LOG_ERR_COLOR, "<ERR>: "), STR_CTR(LOG_ERR_COLOR, fmt), ##__VA_ARGS__)
 #define LOGM_S(fmt, ...) LOGM(screen, fmt, ##__VA_ARGS__)
 #define LOGW_S(fmt, ...) LOGW(screen, fmt, ##__VA_ARGS__)

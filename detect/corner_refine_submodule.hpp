@@ -9,30 +9,28 @@
 #include "armor_corner_optimizer.hpp"
 #include "common.hpp"
 
-namespace detect
-{
+namespace detect {
     const int bin_threshold_for_blue = 70;
     const int bin_threshold_for_red = 60;
 
-    struct CornerRefineConfig : pipeline::ModuleConfig
-    {
+    struct CornerRefineConfig : pipeline::ModuleConfig {
         bool adjust_threshold = false;
     };
 
-    class CornerRefineSubModule : public pipeline::SubModule
-    {
-    public:
-        explicit CornerRefineSubModule(const CornerRefineConfig& config);
+    class CornerRefineSubModule : public pipeline::SubModule {
+      public:
+        explicit CornerRefineSubModule(const CornerRefineConfig &config);
         virtual ~CornerRefineSubModule() = default;
 
-        SubModuleResult process(std::shared_ptr<ThreadDataPack> data,
-                                const pipeline::BasicTask* parent) override;
+        SubModuleResult process(std::shared_ptr<ThreadDataPack> data, const pipeline::BasicTask *parent) override;
 
-    private:
+      private:
+        void show_refined_frame(const ThreadDataPack &data);
+
         CornerRefineConfig config_;
         ArmorCornerOptimizer corner_optimizer;
         int binary_thres = 94;
     };
-}
+} // namespace detect
 
 #endif // DETECT_CORNER_REFINE_SUBMODULE_H

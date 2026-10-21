@@ -99,7 +99,7 @@ constexpr float sigmoid(float x)
     return 1 / (1 + std::exp(-x));
 }
 
-TRTModule::TRTModule(const std::string &onnx_file) : BackEnd() 
+TRTModule::TRTModule(const std::string &onnx_file) : BackEnd()
 {
     std::filesystem::path onnx_file_path(onnx_file);
     auto cache_file_path = onnx_file_path;
@@ -233,7 +233,7 @@ void TRTModule::operator()(const cv::Mat &src, std::vector<bbox_t> &det)
     cudaMemcpyAsync(output_buffer, device_buffer[output_idx], output_sz * sizeof(float), cudaMemcpyDeviceToHost,
                     stream);
     cudaStreamSynchronize(stream);
-    
+
     std::vector<bbox_t> candidates;
     for (int i = 0; i < TOPK_NUM; i++)
     {
@@ -257,7 +257,7 @@ void TRTModule::operator()(const cv::Mat &src, std::vector<bbox_t> &det)
     {
         if (removed[i])
             continue;
-    	auto& box1 = candidates.at(i);
+        auto& box1 = candidates.at(i);
         for (int j = i + 1; j < TOPK_NUM && j < candidates.size(); j++)
         {
             auto& box2 = candidates.at(j);

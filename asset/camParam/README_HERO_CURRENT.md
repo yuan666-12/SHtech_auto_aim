@@ -1,11 +1,11 @@
-# Hero camera parameters - active set
+# 当前 Hero 相机参数
 
-Active files as of 2026-09-04:
+唯一生效文件：`cam_param_hero.yml`。
 
-- cam_param_hero.yml: current Hero runtime camera file. K/D use the 2026-09-03 intrinsic calibration for the replacement Hikrobot MV-CS016-10UC camera.
-- cam_param_hero_intrinsics_20260903.yml: standalone intrinsic calibration output from 2026-09-03.
+- K/D：2026-09-03 更换相机后的内参和畸变参数。
+- R_c2i：2026-10-12 稳健手眼旋转解，采用 33/34 个样本，排除样本 27；方向 RMS 0.529515°。
+- T_c2i：`[0.15378, 0.03203, 0.00279]` m，相机光心在 IMU 左/上/前轴中的偏移。
+- 变换：`p_IMU = R_c2i * p_camera + T_c2i`。
+- `../gimbal_geometry_hero.yml` 保存转轴至 IMU 的机械偏移 `[-0.06428, 0.06787, 0.05789]` m。
 
-Important caveat:
-
-- R_c2i and T_c2i in cam_param_hero.yml are retained legacy values only because the runtime expects extrinsics. They are not verified for the replacement camera and must be replaced by Hero-specific hand-eye/physical calibration.
-- Old sentry/infantry/aerial/balance camera files were moved to _archive_nonhero_20260904/asset/camParam/ to avoid accidental selection.
+本次整理未修改这些矩阵的数值。旧候选参数和历史验证图已从工作目录清理；原始数据在项目目录外的完整归档中保留。参数解释与限制以根目录 `启动参数.md` 为准。

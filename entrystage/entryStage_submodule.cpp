@@ -15,14 +15,14 @@ namespace entrystage
         LOGM_S("[EntryStage] construction completed");
     }
 
-    SubModuleResult EntryStageSubModule::process(std::shared_ptr<ThreadDataPack> data, 
+    SubModuleResult EntryStageSubModule::process(std::shared_ptr<ThreadDataPack> data,
                                      const pipeline::BasicTask* parent)
     {
         // 计算总耗时
         // 使用 EntryStage 的开始时间作为流水线开始时间，Planning 的结束时间作为流水线结束时间
         auto start_time = data->submodule_timestamps[static_cast<uint8_t>(SubModuleName::ENTRYSTAGE)].first;
         auto end_time = data->submodule_timestamps[static_cast<uint8_t>(SubModuleName::COUNT)-1].second;
-        
+
         long total_duration = -1;
         if (start_time.time_since_epoch().count() > 0 && end_time.time_since_epoch().count() > 0) {
              total_duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
@@ -38,7 +38,7 @@ namespace entrystage
                 // 计算模块耗时
                 timings[i * 2] = std::chrono::duration_cast<std::chrono::microseconds>(
                     timestamps.second - timestamps.first).count();
-                
+
                 // 计算模块间耗时（当前模块开始 - 上一个模块结束）
                 if (i > 0) {
                     auto& prev_timestamps = data->submodule_timestamps[i - 1];
@@ -49,14 +49,14 @@ namespace entrystage
                 }
             }
         }
-        
+
         if(config_.debug.log_file)
         {
             LOGM_F("[EntryStage] recording frame index: %d", data->index);
             LOGM_F("[EntryStage] total time cost: %ld ms", total_duration);
             LOGM_F("[EntryStage] start time: %ld",
                    std::chrono::duration_cast<std::chrono::milliseconds>(start_time.time_since_epoch()).count());
-            
+
             // 打印各模块耗时和模块间耗时
             for (size_t i = 0; i < SUBMODULE_COUNT; ++i) {
                 if (timings[i * 2] >= 0) {
@@ -74,7 +74,7 @@ namespace entrystage
                 std::this_thread::sleep_for(std::chrono::milliseconds(3));
             }
         }
-        
+
         //记录敌方机器人位置到 Foxglove
         alive_bridge_.send(pipeline::bridge::EntryStageToFoxgloveAliveMessage{});
         robot_bridge_.send(pipeline::bridge::EntryStageToFoxgloveRobotMessage{data->target_state});
@@ -87,7 +87,7 @@ namespace entrystage
         // 为下一轮做初始化
         data->index = totalframecounter++;
         data->submodule_results.fill(SubModuleResult::NOTYET);
-        
+
         return SubModuleResult::SUCCESS;
     }
 }

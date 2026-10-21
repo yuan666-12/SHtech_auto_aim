@@ -3,15 +3,9 @@
 #include <opencv2/opencv.hpp>
 #include "../cam_wrapper.hpp"
 
-class HikCamWrapper : public WrapperHead
-{
-public:
-    enum class BayerPattern
-    {
-        AUTO = 0,
-        RG,
-        GB
-    };
+class HikCamWrapper : public WrapperHead {
+  public:
+    enum class BayerPattern { AUTO = 0, RG, GB };
 
     cv::Mat img;
 
@@ -34,7 +28,7 @@ public:
     int64_t host_timestamp() const override { return host_timestamp_; }
     uint64_t device_timestamp() const override { return device_timestamp_; }
 
-private:
+  private:
     std::chrono::steady_clock::time_point frame_received_at_{};
     uint64_t frame_number_ = 0, device_timestamp_ = 0;
     int64_t host_timestamp_ = 0;
@@ -52,9 +46,13 @@ private:
     BayerPattern configured_bayer_pattern_;
     BayerPattern bayer_pattern_;
 
-    MV_IMAGE_BASIC_INFO stCamInfo;
+    MV_IMAGE_BASIC_INFO stCamInfo{};
     MV_FRAME_OUT stOutFrame = {0};
     MVCC_INTVALUE stParam;
+
+    int open_device(bool debug);
+    int configure_stream(bool debug);
+    int start_stream(bool debug);
 
     bool updateBayerPatternFromPixelType(unsigned int pixel_type);
     int getCvBayerConversionCode() const;

@@ -7,6 +7,7 @@
 #define SENSOR_SERIAL_INTERFACE_H
 
 #include "common.hpp"
+#include "fire_control.hpp"
 #include <functional>
 
 // 1. 定义独立的回调函数类型
@@ -15,11 +16,11 @@ using RobotStatusCallback = std::function<void(const RobotStatus&)>;
 
 /**
  * @brief 串口接口抽象类 - 驱动层与业务层解耦的核心接口
- * 
+ *
  * 采用事件驱动模型，通过独立的回调机制实现：
  * - 姿态数据（Attitude）到达时立即触发 AttitudeCallback
  * - 机器人状态（RobotStatus）到达时立即触发 RobotStatusCallback
- * 
+ *
  * 驱动层实现此接口，保持无状态化；业务层通过依赖注入使用此接口
  */
 class SerialInterface
@@ -27,6 +28,8 @@ class SerialInterface
 public:
     virtual ~SerialInterface() = default;
     virtual bool fire_actuation_enabled() const { return false; }
+    // Called immediately before transmit_cmd by the same TX thread.
+    virtual void set_fire_diagnostics(const fire_control::Diagnostics&) {}
 
     // 生命周期管理
     virtual bool init() = 0;

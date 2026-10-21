@@ -3,7 +3,7 @@
  * @brief 目标跟踪器模块 - 实现多模型目标跟踪和状态估计
  * @author Cao Jingyan
  * @date 2025/11/21
- * 
+ *
  * 该模块提供：
  * 1. 多模型自适应跟踪算法
  * 2. 扩展卡尔曼滤波和线性卡尔曼滤波的组合使用
@@ -16,7 +16,6 @@
 
 // modules
 #include "common.hpp"
-#include "IESEKF.hpp"
 #include "Kalman.hpp"
 #include "tracking_policy.hpp"
 #include "math_tools.hpp"
@@ -38,8 +37,8 @@
 
 using namespace mathutils;
 
-namespace predict
-{
+namespace predict {
+    struct TrackerDiagnostic;
     using namespace std::chrono;
 
     /**
@@ -51,9 +50,8 @@ namespace predict
      *          - 根据目标旋转速度自动选择合适的跟踪模型
      *          - 具有完整的状态机管理和异常检测机制
      */
-    class Tracker
-    {
-    public:
+    class Tracker {
+      public:
         /// @brief 时间点类型别名
         using TP = std::chrono::high_resolution_clock::time_point;
 
@@ -75,7 +73,7 @@ namespace predict
 
         /// @brief 检测阶段计数阈值，连续检测超过此值进入跟踪状态
         const int detecting_counter_threshold = 4;
-        
+
         // on axcl
         /// @brief 暂时丢失计数阈值，丢失超过此值返回空闲状态
         // Visual loss is bounded in seconds, independently of detector FPS.
@@ -87,7 +85,7 @@ namespace predict
 
         /// @brief 装甲板模型适用阈值 (弧度/秒)，低于此速度使用装甲板模型
         const double armor_model_threshold = 0.7;
-        
+
         /// @brief 整车模型适用阈值 (弧度/秒)，高于此速度使用整车模型
         const double vehicle_model_threshold = 2.7;
 
@@ -96,13 +94,13 @@ namespace predict
 
         const double outpost_r = 0.33;
         const double outpost_yaw_speed = 3.14;
-        const double outpost_fix_yaw_speed_threshold = 2.5; 
+        const double outpost_fix_yaw_speed_threshold = 2.5;
 
-    private:
+      private:
         // === 配置参数 ===
         /// @brief 调试模式标志
         bool debug = false;
-        
+
         /// @brief 参数调整模式标志
         bool adjust = false;
 
@@ -121,31 +119,31 @@ namespace predict
         int p_r_exp = -5 + 10;
 
         // === 观测噪声参数 (基于球坐标系 YPD + Yaw 物理模型) ===
-        
+
         // 1. 方位角标准差 (Azimuth Angle Std Dev) - 单位: 度
-            // 物理意义: 相机水平方向像素抖动导致的角度不确定性
+        // 物理意义: 相机水平方向像素抖动导致的角度不确定性
         // 默认: 3.6°
-        int azi_angle_deg_int = 36;  // 0.1度 * 36 = 3.6°
-        int azi_angle_deg_frac = 0;  // 小数部分 (0.0)
+        int azi_angle_deg_int = 36; // 0.1度 * 36 = 3.6°
+        int azi_angle_deg_frac = 0; // 小数部分 (0.0)
 
         // 2. 俯仰角标准差 (Elevation/Pitch Angle Std Dev) - 单位: 度
         // 物理意义: 相机垂直方向像素抖动导致的角度不确定性
         // 经验值: 0.5° ~ 2.0° (云台Pitch轴震动可能较大)
         // 默认: 3.6°
-        int ele_angle_deg_int = 36;  // 0.1度 * 36 = 3.6°
-        int ele_angle_deg_frac = 0;  // 小数部分 (0.0)
+        int ele_angle_deg_int = 36; // 0.1度 * 36 = 3.6°
+        int ele_angle_deg_frac = 0; // 小数部分 (0.0)
 
         // 3. 距离误差系数 (Distance Error Coefficient) - 无量纲
         // 物理意义: 距离每增加1米，深度测量误差增加多少米 (误差 = 距离 * 系数)
         // 默认: 0.20 (20%)
-        int dist_coeff_percent = 20;  // 百分比表示 (20% = 0.20)
+        int dist_coeff_percent = 20; // 百分比表示 (20% = 0.20)
 
         // 4. 目标偏航角标准差 (Target Yaw Std Dev) - 单位: 度
         // 物理意义: 神经网络解算装甲板朝向的角度不确定性
         // 经验值: 5° ~ 15°
         // 默认: 10°
-        int tgt_yaw_deg_int = 200;     // 0.1度 * 200 = 20°
-        int tgt_yaw_deg_frac = 0;     // 小数部分 (0.0)
+        int tgt_yaw_deg_int = 200; // 0.1度 * 200 = 20°
+        int tgt_yaw_deg_frac = 0;  // 小数部分 (0.0)
 
         // 观测噪声参数
         int r_ycoord_mant = 3;
@@ -156,7 +154,7 @@ namespace predict
         int r_zcoord_exp = -4 + 10;
         int r_yaw_mant = 3;
         int r_yaw_exp = -3 + 10;
-        
+
         // 装甲板KF噪声参数
         int kf_yaw_mant = 15;
         int kf_yaw_exp = -1 + 10;
@@ -168,16 +166,19 @@ namespace predict
         int kf_z_exp = 0 + 10;
 
         // === 计算后的实际物理参数 ===
-        double std_dev_azi_angle = (azi_angle_deg_int + azi_angle_deg_frac / 10.0) * 0.1 * (M_PI / 180.0); // 方位角标准差 (弧度)
-        double std_dev_ele_angle = (ele_angle_deg_int + ele_angle_deg_frac / 10.0) * 0.1 * (M_PI / 180.0); // 俯仰角标准差 (弧度)
-        double std_dev_dist_coeff = dist_coeff_percent / 100.0;                                           // 距离误差系数 (无量纲)
-        double std_dev_tgt_yaw = (tgt_yaw_deg_int + tgt_yaw_deg_frac / 10.0) * 0.1 * (M_PI / 180.0);      // 目标yaw标准差 (弧度)
-        
+        double std_dev_azi_angle =
+            (azi_angle_deg_int + azi_angle_deg_frac / 10.0) * 0.1 * (M_PI / 180.0); // 方位角标准差 (弧度)
+        double std_dev_ele_angle =
+            (ele_angle_deg_int + ele_angle_deg_frac / 10.0) * 0.1 * (M_PI / 180.0); // 俯仰角标准差 (弧度)
+        double std_dev_dist_coeff = dist_coeff_percent / 100.0;                     // 距离误差系数 (无量纲)
+        double std_dev_tgt_yaw =
+            (tgt_yaw_deg_int + tgt_yaw_deg_frac / 10.0) * 0.1 * (M_PI / 180.0); // 目标yaw标准差 (弧度)
+
         // 过程噪声参数
         double p_yaw = sci_to_float(p_yaw_mant, p_yaw_exp - 10);
         double p_coord = sci_to_float(p_coord_mant, p_coord_exp - 10);
         double p_r = sci_to_float(p_r_mant, p_r_exp - 10);
-        
+
         // 装甲板KF参数
         double r_xcoord = sci_to_float(r_xcoord_mant, r_xcoord_exp - 10);
         double r_ycoord = sci_to_float(r_ycoord_mant, r_ycoord_exp - 10);
@@ -191,7 +192,7 @@ namespace predict
         // === 状态变量 ===
         /// @brief 上次更新时间点
         TP last_tp;
-        
+
         /// @brief 时间间隔 (秒)
         double dt = 0.0;
 
@@ -219,27 +220,25 @@ namespace predict
 
         /// @brief 检测阶段计数器
         int detecting_counter;
-        
+
         /// @brief 暂时丢失计数器
         int temp_lost_counter;
         tracking_policy::ObservationGate observation_gate;
+        Eigen::Vector4d pending_switch_measurement_ = Eigen::Vector4d::Zero();
+        TP pending_switch_time_{};
+        bool pending_switch_ = false;
 
         /// @brief 暂时丢失时间点
         TP temp_lost_tp;
 
-        /// @brief 目标旋转计数器
-        int rotate_counter;
-
-    private:
+      private:
         /**
          * @brief 科学计数法转浮点数
          * @param mant 尾数
          * @param exp 指数
          * @return 转换后的浮点数值
          */
-        inline float sci_to_float(int mant, int exp) {
-            return mant * std::pow(10.0f, exp);
-        }
+        inline float sci_to_float(int mant, int exp) { return mant * std::pow(10.0f, exp); }
 
         std::vector<Eigen::Vector4d> armor_xyza_list();
 
@@ -248,19 +247,28 @@ namespace predict
          * @details 设置目标的初始状态和参数
          */
         void target_init();
-        
+
         /**
          * @brief 初始化装甲板模型卡尔曼滤波器
          * @details 设置四个独立的KF：yaw, x, y, z坐标滤波器
          */
+
+        bool process_observation(const Eigen::Vector4d &measurement, const TP &tp, int &count, bool &confirmed_switch,
+                                 TrackerDiagnostic &diagnostic);
+        void update_yaw_filter(bool observed, bool armor_switched);
+        void update_armor_filters(bool observed, bool armor_switched);
+        void update_vehicle_filter(int count, int tag_id, bool armor_switched, TrackerDiagnostic &diagnostic);
+        filter_2d make_axis_filter(const double *process_noise, const double *measurement_noise);
+        Eigen::Matrix4d vehicle_observation_covariance(const Eigen::Vector4d &measurement) const;
+
         void armor_state_kf_init();
-        
+
         /**
          * @brief 初始化整车状态扩展卡尔曼滤波器
          * @details 设置EKF的状态转移函数、观测函数和雅可比矩阵
          */
         void whole_state_ekf_init();
-        
+
         /**
          * @brief 初始化参数调整界面
          * @details 创建OpenCV滑动条用于实时参数调整
@@ -274,11 +282,11 @@ namespace predict
         void update_parameter();
 
         // === 滤波器重置函数组 ===
-        void reset_yaw_kf();        ///< 重置偏航角滤波器
-        void reset_armor_x_kf();    ///< 重置X坐标滤波器
-        void reset_armor_y_kf();    ///< 重置Y坐标滤波器
-        void reset_armor_z_kf();    ///< 重置Z坐标滤波器
-        void reset_whole_state_ekf(); ///< 重置整车状态EKF
+        void reset_yaw_kf(bool preserve_velocity = false); ///< Rebase at a switch; real resets clear velocity.
+        void reset_armor_x_kf();                           ///< 重置X坐标滤波器
+        void reset_armor_y_kf();                           ///< 重置Y坐标滤波器
+        void reset_armor_z_kf();                           ///< 重置Z坐标滤波器
+        void reset_whole_state_ekf();                      ///< 重置整车状态EKF
 
         /**
          * @brief 更新跟踪器状态机
@@ -307,7 +315,7 @@ namespace predict
          */
         bool check_ekf_divergence(const double attitude_yaw);
 
-    public:
+      public:
         /**
          * @brief 带参数构造函数
          * @param debug_ 调试模式标志
@@ -324,12 +332,12 @@ namespace predict
          * @return 当前跟踪器状态
          */
         TrackingState get_tracker_state();
-        
+
         /**
          * @brief 获取目标跟踪信息
          * @return 目标状态结构体的常引用
          */
-        const Target& get_target();
+        const Target &get_target();
 
         /**
          * @brief 重置目标跟踪器
@@ -338,9 +346,9 @@ namespace predict
          * @return 重置后的目标状态
          * @details 用新的观测值重新初始化所有滤波器，进入DETECTING状态
          */
-        const Target& reset_target(const Eigen::Matrix<double, 4, 1> &measurement, TP &tp);
+        const Target &reset_target(const Eigen::Matrix<double, 4, 1> &measurement, TP &tp);
 
-        Eigen::Vector3d h_armor_xyz(const Eigen::VectorXd & x, int id);
+        Eigen::Vector3d h_armor_xyz(const Eigen::VectorXd &x, int id);
 
         int match_armor_id(const Eigen::Matrix<double, 4, 1> &measurement);
 
@@ -354,8 +362,9 @@ namespace predict
          * @return 更新后的目标状态
          * @details 执行完整的跟踪流程：预测、模型选择、状态更新、异常检测
          */
-        const Target& track(const Eigen::Matrix<double, 4, 1> &measurement, const Eigen::Matrix<double, 4, 1> &secondary_measurement, const int same_id_armor_count,
-                                const int tag_id, const TP &tp, const double attitude_yaw);
+        const Target &track(const Eigen::Matrix<double, 4, 1> &measurement,
+                            const Eigen::Matrix<double, 4, 1> &secondary_measurement, const int same_id_armor_count,
+                            const int tag_id, const TP &tp, const double attitude_yaw);
 
     }; // class Tracker
 

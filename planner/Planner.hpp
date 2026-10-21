@@ -3,7 +3,7 @@
  * @brief 弹道规划器模块 - 实现多策略云台轨迹规划和发射预测
  * @author Cao Jingyan
  * @date 2025/11/21
- * 
+ *
  * 该模块提供：
  * 1. 多种策略：无模型跟踪装甲板、装甲板模型跟踪装甲板、整车模型跟踪装甲板、整车模型瞄准车辆中心
  * 2. 基于MPC的云台轨迹优化
@@ -36,16 +36,15 @@
 
 using namespace mathutils;
 
-namespace predict
-{
+namespace predict {
     using namespace std::chrono;
-    
+
     /// @brief MPC时间步长 (秒)
     constexpr double DT = 0.01;
-    
+
     /// @brief MPC半视野长度
     constexpr int HALF_HORIZON = 50;
-    
+
     /// @brief MPC完整视野长度
     constexpr int HORIZON = HALF_HORIZON * 2;
 
@@ -61,16 +60,15 @@ namespace predict
      *          3. 整车模型跟踪装甲板：基于整车旋转模型预测装甲板位置，使用MPC优化云台跟踪轨迹，确保平滑跟踪和准确射击
      *          4. 整车模型瞄准车辆中心：瞄准车辆旋转中心并基于整车模型预测发射窗口
      */
-    class Planner
-    {
-    public:
+    class Planner {
+      public:
         /// @brief 时间点类型别名
         using TP = std::chrono::high_resolution_clock::time_point;
 
         // === 云台物理限制参数 ===
         /// @brief 最大偏航角加速度
         const double max_yaw_acc = 50;
-        
+
         /// @brief 最大俯仰角加速度
         const double max_pitch_acc = 100;
 
@@ -81,17 +79,17 @@ namespace predict
         // === 旋转速度分类阈值 ===
         /// @brief 慢速旋转上限 (弧度/秒)
         const double slow_rotation_upper_bound = 2.1;
-        
+
         /// @brief 中速旋转下限 (弧度/秒)
         const double medium_rotation_lower_bound = 1.57;
-        
+
         /// @brief 中速旋转上限 (弧度/秒)
         const double medium_rotation_upper_bound = 7.33;
-        
+
         /// @brief 高速旋转下限 (弧度/秒)
         const double fast_rotation_lower_bound = 6.28;
 
-        // === 射击决策参数 ===        
+        // === 射击决策参数 ===
         /// @brief 射击精度阈值 (弧度) - 约等于atan(0.05/0.4)
         const double fire_threshold = 0.05; // 0.125;
 
@@ -100,16 +98,16 @@ namespace predict
 
         const double shoot_interval = 0.2;
 
-    private:
+      private:
         // === 配置参数 ===
         /// @brief 通信延迟 (秒)
-        double comm_latency;
+        double comm_latency = 0;
 
         /// @brief 单次发射延迟 (秒)
-        double single_shoot_latency;
+        double single_shoot_latency = 0;
 
         /// @brief 连续射击延迟 (秒)
-        double continue_shoot_latency;
+        double continue_shoot_latency = 0;
 
         /// @brief 射击时机偏移（MPC步数）(与shoot_latency配合使用)
         int shoot_offset = 2;
@@ -137,39 +135,59 @@ namespace predict
         Plan plan;
 
         /// @brief 偏航轴MPC求解器指针
-        TinySolver * yaw_solver_;
-        
+        TinySolver *yaw_solver_;
+
         /// @brief 俯仰轴MPC求解器指针
-        TinySolver * pitch_solver_;
+        TinySolver *pitch_solver_;
 
         /// @brief 上次瞄准的装甲板位置，用于检测装甲板切换
         Eigen::Matrix<double, 3, 1> last_shooted_armor_pos;
 
         /// @brief 装甲板切换标志
         bool armor_jump;
-        
+
         /// @brief 装甲板切换时间戳
         std::chrono::_V2::system_clock::time_point armor_jump_tp;
 
         /// @brief 原始目标偏航角（未经MPC优化）
-        double target_yaw_raw;
-        
+        double target_yaw_raw = 0;
+
         /// @brief 原始目标俯仰角（未经MPC优化）
-        double target_pitch_raw;
+        double target_pitch_raw = 0;
 
         /// @brief 坐标变换器单例 - 负责坐标系转换
-        CoordTransformer& coord_transformer;
+        CoordTransformer &coord_transformer;
 
         /// @brief 允许发弹时间戳
         std::chrono::_V2::system_clock::time_point fire_enable_tp;
 
-    private:
+      private:
         /**
          * @brief 设置偏航轴MPC求解器
          * @details 配置状态空间模型、代价函数和约束条件
          */
+
+        struct PlanningInput {
+            const Target &target;
+            float bullet_speed;
+            double yaw, pitch;
+            const Eigen::Matrix3d &rotation;
+            const TP &time;
+        };
+        void plan_observed_armor(const PlanningInput &input);
+        void plan_linear_armor(const PlanningInput &input);
+        void plan_vehicle_armor(const PlanningInput &input);
+        void plan_vehicle_center(const PlanningInput &input);
+        void validate_plan(const PlanningInput &input);
+        void log_plan_rejection(const PlanningInput &input, const std::exception &error);
+        double center_preaim_radius(const Target &target, double total_delay) const;
+        Pos3D predicted_center_surface(const Target &target, double delay, double radius);
+        void publish_center_window(const Target &target, float bullet_speed);
+
+        AimedTargetType initial_aim_type(double rotation_speed) const;
+
         void setup_yaw_solver();
-        
+
         /**
          * @brief 设置俯仰轴MPC求解器
          * @details 配置状态空间模型、代价函数和约束条件
@@ -195,10 +213,9 @@ namespace predict
          * @return [target_yaw, target_pitch] 云台目标角度
          * @details 考虑弹道下降，计算云台应达到的偏航角和俯仰角
          */
-        Eigen::Matrix<double, 2, 1> cal_gimbal_target(Eigen::Matrix<double, 3, 1> aimed_armor_pos, 
-                                                        const float bullet_speed, 
-                                                        const double attitude_yaw, const double attitude_pitch,
-                                                        const Eigen::Matrix3d &R_world2imu);
+        Eigen::Matrix<double, 2, 1> cal_gimbal_target(Eigen::Matrix<double, 3, 1> aimed_armor_pos,
+                                                      const float bullet_speed, const double attitude_yaw,
+                                                      const double attitude_pitch, const Eigen::Matrix3d &R_world2imu);
 
         /**
          * @brief 生成MPC参考轨迹
@@ -212,9 +229,9 @@ namespace predict
          * @return 完整的参考轨迹矩阵
          * @details 生成HORIZON长度的参考轨迹，包含偏航角、偏航角速度、俯仰角、俯仰角速度
          */
-        Trajectory get_trajectory(const Target &target, const double total_delay, const double yaw0, const double bullet_speed, 
-                                    const double attitude_yaw, const double attitude_pitch,
-                                    const Eigen::Matrix3d &R_world2imu);
+        Trajectory get_trajectory(const Target &target, const double total_delay, const double yaw0,
+                                  const double bullet_speed, const double attitude_yaw, const double attitude_pitch,
+                                  const Eigen::Matrix3d &R_world2imu);
 
         /**
          * @brief 更新瞄准目标类型
@@ -233,30 +250,30 @@ namespace predict
          * @return [yaw_speed, pitch_speed] 目标角速度
          * @details 从目标直角坐标速度计算对应的云台角速度
          */
-        Eigen::Matrix<double, 2, 1> cal_target_speed(const Eigen::Matrix<double, 2, 1> &x_state, 
-                                                        const Eigen::Matrix<double, 2, 1> &y_state, 
-                                                        const Eigen::Matrix<double, 2, 1> &z_state);
+        Eigen::Matrix<double, 2, 1> cal_target_speed(const Eigen::Matrix<double, 2, 1> &x_state,
+                                                     const Eigen::Matrix<double, 2, 1> &y_state,
+                                                     const Eigen::Matrix<double, 2, 1> &z_state);
 
-    public:
+      public:
         /**
          * @brief 默认构造函数
          */
         Planner() = default;
-        
+
         /**
          * @brief 带参数构造函数
          * @param comm_latency_ 通信延迟时间 (s)
          * @param shoot_latency_ 发射延迟时间 (s)
          * @param debug_ 调试模式标志
          */
-        explicit Planner(const std::string planner_param, bool debug_);
+        explicit Planner(const std::string &planner_param, bool debug_);
 
         /**
          * @brief 重置规划器状态
          * @details 清空瞄准位置和装甲板切换状态
          */
         void planner_reset();
-        
+
         /**
          * @brief 初始化瞄准目标
          * @details 设置初始瞄准模式为无模型预测
@@ -267,8 +284,8 @@ namespace predict
          * @brief 获取当前预测计划
          * @return 计划结构体的常引用
          */
-        const Plan& get_plan();
-        
+        const Plan &get_plan();
+
         /**
          * @brief 制定预测计划
          * @param target 目标跟踪状态
@@ -280,9 +297,8 @@ namespace predict
          * @return 生成的预测计划
          * @details 根据目标状态选择预测策略，生成包含云台角度、角速度和射击决策的完整计划
          */
-        const Plan& make_plan(const Target &target, const float bullet_speed,
-                                const double attitude_yaw, const double attitude_pitch, 
-                                const Eigen::Matrix3d &R_world2imu, const TP &tp);
+        const Plan &make_plan(const Target &target, const float bullet_speed, const double attitude_yaw,
+                              const double attitude_pitch, const Eigen::Matrix3d &R_world2imu, const TP &tp);
 
         /**
          * @brief 整车状态转换为观测值

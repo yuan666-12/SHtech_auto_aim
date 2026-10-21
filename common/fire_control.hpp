@@ -90,6 +90,16 @@ struct Decision {
     double yaw_error_deg = INFINITY, pitch_error_deg = INFINITY;
     double yaw_limit_deg = 0, pitch_limit_deg = 0;
     double rx_age_ms = INFINITY, settled_ms = 0;
+    center_fire::Evaluation window;
+};
+// Per-TX-thread metadata; never changes the wire protocol or fire decision.
+struct Diagnostics {
+    Decision decision;
+    bool valid=false, eligible=false, model_trusted=false;
+    bool observation_fresh=false, shot_hold=false;
+    int requested=0, gate_requested=0, aim_mode=0;
+    int model_rotation_count=0, tracker_model=0;
+    double observation_remaining_ms=NAN, model_speed_mps=NAN, rx_age_ms=NAN;
 };
 
 class Gate {
@@ -143,7 +153,8 @@ public:
                 return fail(Reason::PitchLimited);
             if (!center_window_.config().valid) return fail(Reason::InvalidConfig);
             if (in.requested != 2) { out.reason=Reason::NoRequest; return out; }
-            if (center_window_.evaluate(in.center_window,in.now,in.rx_yaw,in.rx_pitch,in.target_id)) {
+            if (center_window_.evaluate(in.center_window,in.now,in.rx_yaw,in.rx_pitch,in.target_id,
+                                        &out.window)) {
                 out.advice=2;out.reason=Reason::Ready;
             } else out.reason=Reason::CenterWindowClosed;
             return out;

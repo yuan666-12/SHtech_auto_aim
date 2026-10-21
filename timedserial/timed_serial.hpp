@@ -22,37 +22,30 @@
 #include <chrono>
 #include <memory>
 
-namespace hardware
-{
-    struct TimedSerialConfig : pipeline::ModuleConfig
-    {
-    };
+namespace hardware {
+    struct TimedSerialConfig : pipeline::ModuleConfig {};
 
     /**
      * @brief   串口定时通讯子模块（重构版）
-     * @details 
+     * @details
      * 重构要点：
      * - 依赖注入：通过构造函数接收 SerialInterface 独占指针
      * - 事件驱动：通过独立回调接收姿态和状态数据
      * - 数据汇聚：作为数据的汇聚点，统一管理和合并来自驱动层的数据
      * - 线程安全：使用互斥锁保护共享数据
      */
-    class TimedSerial : public pipeline::BasicTask
-    {
-    public:
-
+    class TimedSerial : public pipeline::BasicTask {
+      public:
         /**
          * @brief   构造函数（重构版 - 依赖注入）
          * @param[in] driver_impl 串口驱动实现的独占指针（依赖注入）
          * @param[in] message_bridge 消息桥接对象引用
          */
-        TimedSerial(const TimedSerialConfig& config,
-                        std::unique_ptr<SerialInterface> driver_impl, 
-                        pipeline::bridge::PlannerToSerialBridge &planner_bridge,
-                        pipeline::bridge::SensorFromSerialAttitudeBridge &attitude_bridge,
-                        pipeline::bridge::SensorFromSerialRobotStatusBridge &status_bridge
-                    );
-        
+        TimedSerial(const TimedSerialConfig &config, std::unique_ptr<SerialInterface> driver_impl,
+                    pipeline::bridge::PlannerToSerialBridge &planner_bridge,
+                    pipeline::bridge::SensorFromSerialAttitudeBridge &attitude_bridge,
+                    pipeline::bridge::SensorFromSerialRobotStatusBridge &status_bridge);
+
         virtual ~TimedSerial();
 
         /**
@@ -60,7 +53,7 @@ namespace hardware
          */
         void operator()() override;
 
-    private:
+      private:
         TimedSerialConfig config_;
         hero_log::RateGate status_log_gate_, transmit_log_gate_, idle_log_gate_;
         hero_log::RateGate cost_log_gate_, overrun_log_gate_;
@@ -68,6 +61,14 @@ namespace hardware
          * @brief   读取最新命令和姿态数据，基于时间戳进行线性插值
          * @return  bool 成功返回true，命令数组耗尽返回false
          */
+
+        fire_control::Input make_fire_input(bool valid, float desired_yaw, float desired_pitch, float sent_yaw,
+                                            float sent_pitch, bool holding_shot);
+        void record_fire_diagnostics(const fire_control::Input &input, const fire_control::Decision &decision,
+                                     bool holding_shot);
+        void log_transmission(float yaw, float pitch, uint8_t advice);
+        void transmit_cached_command();
+
         bool read_latest_command_and_attitude();
 
         /**
@@ -76,9 +77,8 @@ namespace hardware
          * average: it damps overshoot while retaining a bounded response to
          * a moving armor plate.
          */
-        void apply_tracking_slew_limit(float &yaw_deg, float &pitch_deg,
-                                       bool target_valid);
-        
+        void apply_tracking_slew_limit(float &yaw_deg, float &pitch_deg, bool target_valid);
+
         /**
          * @brief   处理来自 Planner 的命令消息（回调函数）
          * @param[in] msg 包含命令数组和姿态的消息
@@ -89,13 +89,13 @@ namespace hardware
          * @brief   处理姿态数据更新（驱动层回调）
          * @param[in] att 最新的姿态数据
          */
-        void handle_attitude_update(const Attitude& att);
+        void handle_attitude_update(const Attitude &att);
 
         /**
          * @brief   处理机器人状态更新（驱动层回调）
          * @param[in] sts 最新的机器人状态数据
          */
-        void handle_status_update(const RobotStatus& sts);
+        void handle_status_update(const RobotStatus &sts);
 
         Attitude handle_attitude_get();
 
@@ -105,13 +105,13 @@ namespace hardware
         static constexpr size_t CMDARRAYLENGTH = 10;
         static constexpr std::chrono::microseconds send_period{5000};
         using command_array_t = std::array<RobotCommand, CMDARRAYLENGTH>;
-        
+
         // 通讯相关成员变量
-        std::unique_ptr<SerialInterface> driver_; /*!< 串口驱动独占指针（依赖注入） */
-        pipeline::bridge::PlannerToSerialBridge &planner_bridge_; /*!< 消息桥接引用 */
-        pipeline::bridge::SensorFromSerialAttitudeBridge &attitude_bridge_; /*!< 串口到传感器的姿态消息桥接 */
+        std::unique_ptr<SerialInterface> driver_;                            /*!< 串口驱动独占指针（依赖注入） */
+        pipeline::bridge::PlannerToSerialBridge &planner_bridge_;            /*!< 消息桥接引用 */
+        pipeline::bridge::SensorFromSerialAttitudeBridge &attitude_bridge_;  /*!< 串口到传感器的姿态消息桥接 */
         pipeline::bridge::SensorFromSerialRobotStatusBridge &status_bridge_; /*!< 串口到传感器的状态消息桥接 */
-        
+
         // 来自 Planner 的命令数据（受 command_mutex_ 保护）
         command_array_t command_array_{};
         RobotCommand command_cache_{};
@@ -126,8 +126,12 @@ namespace hardware
         uint64_t single_shot_id_ = 0, single_shot_id_cache_ = 0;
         fire_control::Gate fire_gate_;
         center_fire::Snapshot center_window_, center_window_cache_;
+        bool model_trusted_ = false, model_trusted_cache_ = false;
+        int model_rotation_count_ = 0, model_rotation_count_cache_ = 0;
+        int tracker_model_ = 0, tracker_model_cache_ = 0;
+        std::chrono::steady_clock::time_point observation_deadline_cache_{};
         std::chrono::steady_clock::time_point shot_hold_until_{};
-        float shot_hold_yaw_=0, shot_hold_pitch_=0;
+        float shot_hold_yaw_ = 0, shot_hold_pitch_ = 0;
         // Keep the latest valid command on the wire between visual frames.
         // The STM32 intentionally drops tracking after 100 ms without a
         // valid packet, while detector/planner frames can take longer.
@@ -141,20 +145,20 @@ namespace hardware
         float filtered_pitch_deg_ = 0.0f;
         static constexpr float yaw_step_limit_deg_ = 0.90f;
         static constexpr float pitch_step_limit_deg_ = 0.45f;
-        
+
         // 来自驱动层的实时数据（受 sensor_mutex_ 保护）
         std::chrono::steady_clock::time_point latest_attitude_received_at_{};
         AttitudeHistory attitude_history_;
-        Attitude latest_attitude_;           /*!< 最新姿态数据 */
-        RobotStatus latest_robot_status_;    /*!< 最新机器人状态 */
-        
+        Attitude latest_attitude_;        /*!< 最新姿态数据 */
+        RobotStatus latest_robot_status_; /*!< 最新机器人状态 */
+
         // 线程同步 - 细粒度锁设计
-        std::mutex command_mutex_;  /*!< 保护命令相关数据（来自Planner） */
-        std::mutex sensor_mutex_;   /*!< 保护传感器数据（来自驱动层） */
-        
+        std::mutex command_mutex_; /*!< 保护命令相关数据（来自Planner） */
+        std::mutex sensor_mutex_;  /*!< 保护传感器数据（来自驱动层） */
+
         // 性能统计
         fps_counter total_fps{"timedserial_new_fps"};
     };
-}
+} // namespace hardware
 
 #endif // TIMEDSERIAL_NEW_H

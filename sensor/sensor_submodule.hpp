@@ -21,14 +21,12 @@
 #include <string>
 #include <opencv2/opencv.hpp>
 
-namespace sensor
-{
-    struct SensorConfig : pipeline::ModuleConfig
-    {
+namespace sensor {
+    struct SensorConfig : pipeline::ModuleConfig {
         std::function<bool()> stop_requested; // Also used during camera initialization.
-        bool save_image = false;   /*!< 是否自动保存原始帧用于标定 */
-        int save_interval = 0;     /*!< 每隔多少帧保存一张（<=0 时不保存） */
-        bool calib_detect = false; /*!< 是否实时检测棋盘格角点（标定模式专用，会拖慢帧率） */
+        bool save_image = false;              /*!< 是否自动保存原始帧用于标定 */
+        int save_interval = 0;                /*!< 每隔多少帧保存一张（<=0 时不保存） */
+        bool calib_detect = false;            /*!< 是否实时检测棋盘格角点（标定模式专用，会拖慢帧率） */
     };
 
     /**
@@ -36,15 +34,16 @@ namespace sensor
      * @details 包装原有 Sensor 逻辑为 SubModule，专注于相机数据处理
      *          通讯功能已移至 hardware::TimedSerial 模块
      */
-    class SensorSubModule : public pipeline::SubModule
-    {
-    public:
+    class SensorSubModule : public pipeline::SubModule {
+      public:
         /**
          * @brief   构造函数
          * @param[in] VideoSource 视频源路径
          * @param[in] flip_image 是否翻转图像
          */
-        SensorSubModule(const SensorConfig& config, const std::string& VideoSource, const std::string& flip_image, pipeline::bridge::SensorFromSerialAttitudeBridge &attitude_bridge, pipeline::bridge::SensorFromSerialRobotStatusBridge &status_bridge); 
+        SensorSubModule(const SensorConfig &config, const std::string &VideoSource, const std::string &flip_image,
+                        pipeline::bridge::SensorFromSerialAttitudeBridge &attitude_bridge,
+                        pipeline::bridge::SensorFromSerialRobotStatusBridge &status_bridge);
         virtual ~SensorSubModule();
 
         /**
@@ -53,21 +52,37 @@ namespace sensor
          * @param[in] parent     父任务指针，用于生命周期检查
          * @return  bool         返回 true 表示数据应该传递到下游，false 表示丢弃数据
          */
-        SubModuleResult process(std::shared_ptr<ThreadDataPack> data, 
-                    const pipeline::BasicTask* parent) override;
+        SubModuleResult process(std::shared_ptr<ThreadDataPack> data, const pipeline::BasicTask *parent) override;
 
-    private:
+      private:
+        struct CaptureContext {
+            pipeline::bridge::SensorFromSerialAttitudeMessage attitude_message;
+            std::chrono::steady_clock::time_point attitude_sampled_at{};
+            int64_t image_read_unix_ms = 0;
+            bool attitude_fresh = false, validation_capture = false;
+            bool board_checked = false, board_found = false;
+            std::vector<cv::Point2f> calibration_corners;
+        };
+        bool read_frame(ThreadDataPack &data, CaptureContext &context);
+        bool check_board(const ThreadDataPack &data, CaptureContext &context);
+        bool save_pair(const ThreadDataPack &data, CaptureContext &context);
+        void show_calibration_frame(const ThreadDataPack &data, CaptureContext &context);
+        int frames_since_save_ = 0;
+        std::string capture_hint_;
+        bool last_capture_ok_ = false;
+        std::chrono::steady_clock::time_point hint_until_{};
+
         SensorConfig config_;
         // 传感器相关成员变量
-        std::unique_ptr<WrapperHead> video;           /*!< 视频输入接口指针 */
-        bool is_image_input_flipped = false;    /*!< 标记输入图像是否需要翻转 */
-        
-        // 状态跟踪
-        fps_counter total_fps{"sensor_fps"};    /*!< FPS计数器 */
+        std::unique_ptr<WrapperHead> video;  /*!< 视频输入接口指针 */
+        bool is_image_input_flipped = false; /*!< 标记输入图像是否需要翻转 */
 
-        pipeline::bridge::SensorFromSerialAttitudeBridge &attitude_bridge; /*!< 串口到传感器的姿态消息桥接 */
+        // 状态跟踪
+        fps_counter total_fps{"sensor_fps"}; /*!< FPS计数器 */
+
+        pipeline::bridge::SensorFromSerialAttitudeBridge &attitude_bridge;  /*!< 串口到传感器的姿态消息桥接 */
         pipeline::bridge::SensorFromSerialRobotStatusBridge &status_bridge; /*!< 串口到传感器的状态消息桥接 */
     };
-}
+} // namespace sensor
 
 #endif // SENSOR_SENSOR_SUBMODULE_H

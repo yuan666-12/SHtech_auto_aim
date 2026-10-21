@@ -38,7 +38,7 @@ namespace foxgloveSer
         virtual ~FoxgloveServer_t();
 
         void operator()() override;
- 
+
     private:
         FoxgloveServerConfig config_;
         // 消息桥接引用
