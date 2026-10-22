@@ -201,13 +201,10 @@ namespace predict {
                 }
                 same_id_armor_count = 0;
                 target.measurement_rejected = true;
-            } else if (target.predictor_state == TrackingState::TEMP_LOST && !previous_rejection) {
-                diagnostic.gate = "accepted";
-                diagnostic.reset_reason = "reacquired_after_temp_lost";
-                TP reset_time = tp;
-                reset_target(measurement, reset_time);
-                return false;
             } else {
+                // A bounded loss is a predict-only interval. An accepted
+                // same-target observation updates the existing filters and
+                // preserves learned geometry and confirmed armor switches.
                 diagnostic.gate = "accepted";
                 const double pending_age = tracking_policy::observation_age(pending_switch_time_, tp);
                 confirmed_pending_switch =
@@ -741,7 +738,8 @@ namespace predict {
         }
         if (target.predictor_state == TrackingState::TEMP_LOST && same_id_armor_count > 0)
             target.predictor_state = TrackingState::TRACKING;
-        // Actual visual reacquisition resets before update; confirmed candidate jumps do not.
+        // Within the observation deadline, an accepted reacquisition resumes
+        // tracking with the predicted filters instead of rebuilding the model.
     }
 
     /**

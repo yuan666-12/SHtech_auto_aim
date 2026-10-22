@@ -42,6 +42,12 @@ add_executable(hero_refactor_check "${HERO_ROOT}/tools/hero_refactor_check.cpp"
 target_link_libraries(hero_refactor_check PRIVATE hero_check_core)
 add_test(NAME refactor COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/run_case.py"
     "${CMAKE_CURRENT_BINARY_DIR}/refactor-xuc.log" $<TARGET_FILE:hero_refactor_check> "${HERO_ROOT}")
+add_executable(hero_dropout_check "${HERO_ROOT}/tools/hero_dropout_check.cpp"
+    $<TARGET_OBJECTS:hero_vision_check>)
+target_link_libraries(hero_dropout_check PRIVATE hero_check_core)
+add_test(NAME dropout COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/run_case.py"
+    "${CMAKE_CURRENT_BINARY_DIR}/dropout-xuc.log" $<TARGET_FILE:hero_dropout_check> "${HERO_ROOT}")
+set_tests_properties(dropout PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE)
 foreach(name algorithm tracking center_window console capture vehicle_model tx_diagnostics)
     add_executable(hero_${name}_check "${HERO_ROOT}/tools/hero_${name}_check.cpp")
     target_link_libraries(hero_${name}_check PRIVATE hero_check_core)

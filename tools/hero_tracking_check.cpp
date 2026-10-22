@@ -124,8 +124,10 @@ void tracker_checks() {
     require(tracker.get_target().last_observation_update_time==update_seen,"missed frames do not renew acceptance deadline");
     t+=10ms;tracker.track(z,z,1,2,t,0);
     const auto& acquired=tracker.get_target();
-    require(acquired.predictor_state==TrackingState::DETECTING&&acquired.filter_reset,"reacquisition resets filters");
-    require(acquired.armor_x_state(1)==0&&acquired.armor_y_state(1)==0&&acquired.armor_z_state(1)==0&&acquired.yaw_state(1)==0,"reacquisition clears velocity");
+    require(acquired.predictor_state==TrackingState::TRACKING&&!acquired.filter_reset,
+            "short-loss reacquisition resumes the existing filters");
+    require(acquired.observation_updated&&!acquired.measurement_rejected&&acquired.last_observation_time==t,
+            "only an accepted observation refreshes the tracking deadline");
     for(int i=0;i<5;++i){t+=20ms;tracker.track(z,z,1,2,t,0);}
     t+=201ms;tracker.track(z,z,0,2,t,0);
     require(tracker.get_target().predictor_state==TrackingState::IDLE,"single slow missed frame expires by elapsed time");
