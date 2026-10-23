@@ -103,6 +103,7 @@ struct Diagnostics {
     // Full-cycle snapshot, consumed only by the opt-in diagnostic writer.
     bool synchronized=false;
     double planned_yaw=NAN,planned_pitch=NAN;
+    Clock::time_point decision_started_at{}, decision_finished_at{};
     Input input;
     Config fire_config;
     center_fire::Config center_config;

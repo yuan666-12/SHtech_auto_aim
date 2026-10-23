@@ -7,6 +7,7 @@
 
 #include "sensor_submodule.hpp"
 #include "calibration_capture.hpp"
+#include "diagnostic_capture.hpp"
 
 // submodules
 #include <chrono>
@@ -262,6 +263,7 @@ namespace sensor {
     SubModuleResult SensorSubModule::process(std::shared_ptr<ThreadDataPack> data, const pipeline::BasicTask *) {
         CaptureContext context;
         if (!read_frame(*data, context)) return SubModuleResult::FAILURE;
+        diagnostic_capture::sample(*data, PROJECT_DIR);
         const char *validation = std::getenv("AUTOAIM_VALIDATION_CAPTURE");
         context.validation_capture = validation && std::string(validation) == "1";
         const bool auto_save_due =

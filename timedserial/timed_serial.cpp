@@ -280,12 +280,16 @@ namespace hardware {
 
     void TimedSerial::record_fire_diagnostics(const fire_control::Input &fire_input,
                                               const fire_control::Decision &fire_decision, bool holding_shot,
-                                              float planned_yaw, float planned_pitch) {
+                                              float planned_yaw, float planned_pitch,
+                                              fire_control::Clock::time_point decision_started,
+                                              fire_control::Clock::time_point decision_finished) {
         fire_control::Diagnostics diagnostic;
         diagnostic.valid = true;
         diagnostic.decision = fire_decision;
         diagnostic.synchronized = true;
         diagnostic.input = fire_input;
+        diagnostic.decision_started_at = decision_started;
+        diagnostic.decision_finished_at = decision_finished;
         diagnostic.planned_yaw = planned_yaw;
         diagnostic.planned_pitch = planned_pitch;
         diagnostic.fire_config = fire_gate_.config();
@@ -345,7 +349,9 @@ namespace hardware {
         apply_tracking_slew_limit(yaw_target, pitch_target, target_valid);
         auto fire_input =
             make_fire_input(target_valid, desired_yaw, desired_pitch, yaw_target, pitch_target, holding_shot);
+        const auto decision_started = fire_control::Clock::now();
         const auto fire_decision = fire_gate_.evaluate(fire_input);
+        const auto decision_finished = fire_control::Clock::now();
         if (fire_decision.advice == 2 && driver_->fire_actuation_enabled() &&
             fire_aim_mode_cache_ == AimedTargetType::VEHICLE_CENTER_WITH_VEHICLE_MODEL) {
             shot_hold_yaw_ = fire_input.rx_yaw;
@@ -359,7 +365,8 @@ namespace hardware {
             filtered_pitch_deg_ = pitch_target;
             filtered_target_initialized_ = true;
         }
-        record_fire_diagnostics(fire_input, fire_decision, holding_shot, planned_yaw, planned_pitch);
+        record_fire_diagnostics(fire_input, fire_decision, holding_shot, planned_yaw, planned_pitch,
+                                decision_started, decision_finished);
         driver_->transmit_cmd(yaw_target, command_cache_.yaw_speed, pitch_target, command_cache_.pitch_speed,
                               command_cache_.yaw_acc, command_cache_.pitch_acc, command_cache_.distance,
                               fire_decision.advice, command_cache_.target_id);

@@ -1,5 +1,6 @@
 #pragma once
 #include "fire_control.hpp"
+#include "diagnostic_session.hpp"
 #include <array>
 #include <cstdlib>
 #include <filesystem>
@@ -126,36 +127,145 @@ public:
     }
 };
 
+
+// Companion schema: original hero-hit-v1 CSV remains replay-compatible.
+inline constexpr const char* geometry_columns=
+    "sequence,wall_ns,now_ns,gate_begin_ns,gate_end_ns,writer_entry_ns,gate_eval_us,"
+    "now_to_writer_ms,model_age_ms,prediction_horizon_ms,impact_ns,fire_byte,advice,"
+    "gate_reason,window_reason,hit_armor,hit_inside,hit_front,flight_s,"
+    "trajectory_valid,ray_x_m,ray_y_m,ray_z_m,armor_x_m,armor_y_m,armor_z_m,"
+    "normal_x,normal_y,side_recomputed_m,height_recomputed_m,side_recorded_m,"
+    "height_recorded_m,probe_flight_s,probe_x_m,probe_y_m,probe_z_m";
+struct Geometry {
+    bool trajectory_valid=false;
+    double model_age_ms=NAN,horizon_ms=NAN,probe_flight_s=.2;
+    long long impact_ns=0;
+    std::array<double,3> ray{NAN,NAN,NAN},armor{NAN,NAN,NAN},probe{NAN,NAN,NAN};
+    double nx=NAN,ny=NAN,side=NAN,height=NAN;
+};
+inline Geometry geometry(const fire_control::Diagnostics& d) {
+    Geometry g;const auto& in=d.input;const auto& s=in.center_window;
+    const auto& hit=d.decision.window.hit;
+    if(s.state_time!=Clock::time_point{})
+        g.model_age_ms=std::chrono::duration<double,std::milli>(in.now-s.state_time).count();
+    if(!std::isfinite(in.rx_yaw) || !std::isfinite(in.rx_pitch) ||
+       !std::isfinite(s.bullet_speed) || s.bullet_speed<=0 || s.bullet_speed>100 ||
+       !std::isfinite(s.yaw_comp_rad) || !std::isfinite(s.pitch_comp_rad))return g;
+    const double yaw=in.rx_yaw*center_fire::pi/180-s.yaw_comp_rad;
+    const double pitch=in.rx_pitch*center_fire::pi/180-s.pitch_comp_rad;
+    const double vh=s.bullet_speed*std::cos(pitch),vz=s.bullet_speed*std::sin(pitch);
+    if(vh<=1e-6)return g;
+    const auto point=[&](double t) {
+        const double range=s.air_resistance ?
+            std::log1p(center_fire::drag_k*vh*t)/center_fire::drag_k : vh*t;
+        return std::array<double,3>{-range*std::sin(yaw),range*std::cos(yaw),
+                                   vz*t-.5*center_fire::gravity*t*t};
+    };
+    g.trajectory_valid=true;g.probe=point(g.probe_flight_s);
+    if(!hit.crossed || hit.armor<0 || hit.armor>3 || !std::isfinite(hit.flight_s) ||
+       hit.flight_s<=0 || !std::isfinite(g.model_age_ms) ||
+       !std::isfinite(s.release_delay_s) ||
+       !std::all_of(s.state.begin(),s.state.end(),[](double v){return std::isfinite(v);}))return g;
+    const double tau=g.model_age_ms/1000+s.release_delay_s+hit.flight_s;
+    const double phase=s.state[6]+s.state[7]*tau+hit.armor*center_fire::pi/2;
+    const double radius=s.state[8]+(hit.armor%2?s.state[9]:0);
+    g.nx=std::sin(phase);g.ny=std::cos(phase);
+    g.ray=point(hit.flight_s);
+    g.armor={s.state[2]+s.state[3]*tau-radius*g.nx,
+             s.state[0]+s.state[1]*tau-radius*g.ny,
+             s.state[4]+s.state[5]*tau+(hit.armor%2?s.state[10]:0)};
+    g.side=g.ny*(g.ray[0]-g.armor[0])-g.nx*(g.ray[1]-g.armor[1]);
+    g.height=g.ray[2]-g.armor[2];g.horizon_ms=tau*1000;
+    g.impact_ns=ns(in.now)+static_cast<long long>((s.release_delay_s+hit.flight_s)*1e9);
+    return g;
+}
+inline std::string encode_geometry(const fire_control::Diagnostics& d,const Transport& tx,
+                                   unsigned long long seq,Clock::time_point writer_entry) {
+    const auto g=geometry(d);const auto& hit=d.decision.window.hit;
+    const bool timed=d.decision_started_at!=Clock::time_point{} &&
+        d.decision_finished_at>=d.decision_started_at;
+    std::ostringstream out;out.imbue(std::locale::classic());out<<std::setprecision(17)<<seq;
+    const auto field=[&](auto value){out<<','<<value;};
+    field(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count());
+    field(ns(d.input.now));field(ns(d.decision_started_at));field(ns(d.decision_finished_at));
+    field(ns(writer_entry));
+    field(timed?std::chrono::duration<double,std::micro>(
+        d.decision_finished_at-d.decision_started_at).count():NAN);
+    field(std::chrono::duration<double,std::milli>(writer_entry-d.input.now).count());
+    field(g.model_age_ms);field(g.horizon_ms);field(g.impact_ns);
+    field(tx.fire_byte);field(unsigned(d.decision.advice));
+    field(fire_control::name(d.decision.reason));field(d.decision.window.reason);
+    field(hit.armor);field(hit.inside);field(hit.front);field(hit.flight_s);
+    field(g.trajectory_valid);
+    for(double v:g.ray)field(v);
+    for(double v:g.armor)field(v);
+    field(g.nx);field(g.ny);field(g.side);field(g.height);
+    field(hit.lateral_m);field(hit.vertical_m);field(g.probe_flight_s);
+    for(double v:g.probe)field(v);
+    return out.str();
+}
+
 class Writer {
-    std::array<char,65536> buffer_{};
-    std::ofstream file_;
+    std::array<char,65536> buffer_{},geometry_buffer_{};
+    std::ofstream file_,geometry_file_;
     unsigned long long sequence_=0;
     Clock::time_point flushed_{};
+    diagnostic_session::Session* session_=nullptr;
 public:
     Writer(const char *path,const char *project) {
         if(!path || !*path)return;
+        if(diagnostic_session::config().enabled)
+            session_=&diagnostic_session::Session::get(project);
         file_.rdbuf()->pubsetbuf(buffer_.data(),buffer_.size());
         file_.imbue(std::locale::classic());file_.open(path,std::ios::app);
         if(!file_) { std::cerr<<"[HIT_DIAG] cannot open diagnostic file: "<<path<<'\n';return; }
+        const auto geometry_path=std::filesystem::path(path).string()+".geometry.csv";
+        geometry_file_.rdbuf()->pubsetbuf(geometry_buffer_.data(),geometry_buffer_.size());
+        geometry_file_.imbue(std::locale::classic());geometry_file_.open(geometry_path,std::ios::app);
+        if(!geometry_file_)std::cerr<<"[HIT_DIAG] cannot open geometry file: "<<geometry_path<<'\n';
         std::error_code error;const auto exe=std::filesystem::read_symlink("/proc/self/exe",error);
         const char *config=std::getenv("AUTOAIM_CONFIG");
-        file_<<"# schema=hero-hit-v1 pid="<<getpid()<<" project="<<std::quoted(project)
-             <<" executable="<<std::quoted(exe.string())<<" build="<<std::quoted(std::string(__DATE__)+" "+__TIME__)
-             <<" config="<<std::quoted(config?config:"")<<'\n'<<columns<<'\n';
+        std::ostringstream header;
+        header<<"# schema=hero-hit-v1 pid="<<getpid()<<" project="<<std::quoted(project)
+              <<" executable="<<std::quoted(exe.string())<<" build="
+              <<std::quoted(std::string(__DATE__)+" "+__TIME__)
+              <<" config="<<std::quoted(config?config:"")<<'\n'<<columns<<'\n';
+        const std::string detail_header=std::string(
+            "# schema=hero-hit-geometry-v1 units=m,rad,s coords=world_xyz origin=gimbal_axis_intersection "
+            "timing=steady_ns probe_flight_s=0.2 projectile_direction=actual_rx_minus_compensation\n")+
+            geometry_columns+"\n";
+        if(session_ && !session_->reserve(header.str().size()+
+                (geometry_file_?detail_header.size():0))) {
+            file_.close();geometry_file_.close();return;
+        }
+        file_<<header.str();if(geometry_file_)geometry_file_<<detail_header;
     }
     bool enabled() const { return file_.is_open() && file_.good(); }
     void write(const fire_control::Diagnostics &d,const Transport &tx) {
-        if(!enabled() || !d.synchronized)return;
-        file_<<encode(d,tx,++sequence_)<<'\n';
-        if(d.input.now-flushed_>=std::chrono::seconds(1)) {file_.flush();flushed_=d.input.now;}
+        if(!enabled() || !d.synchronized || (session_ && !session_->active()))return;
+        const auto entry=Clock::now();
+        const auto raw=encode(d,tx,sequence_+1);
+        const auto detail=geometry_file_?encode_geometry(d,tx,sequence_+1,entry):std::string{};
+        if(session_ && !session_->reserve(raw.size()+1+(detail.empty()?0:detail.size()+1)))return;
+        ++sequence_;file_<<raw<<'\n';if(!detail.empty())geometry_file_<<detail<<'\n';
+        if(entry-flushed_>=std::chrono::seconds(1)) {
+            file_.flush();if(geometry_file_)geometry_file_.flush();flushed_=entry;
+        }
     }
 };
 inline void append(const fire_control::Diagnostics &d,const Transport &tx,const char *project) noexcept {
     const char *path=std::getenv("AUTOAIM_HIT_LOG_FILE");
-    if(!path || !*path)return;
+    if((path && !*path) || (!path && !diagnostic_session::config().enabled) || !d.synchronized)return;
     try {
-        static thread_local Writer writer(path,project);
+        static thread_local const std::string selected_path=[&] {
+            if(path)return std::string(path);
+            const auto& session=diagnostic_session::Session::get(project);
+            return session.directory().empty()?std::string{}:(session.directory()/"tx.csv").string();
+        }();
+        static thread_local Writer writer(selected_path.c_str(),project);
         writer.write(d,tx);
-    }catch(...) { /* Diagnostic failures never change a control decision. */ }
+    }catch(...) { /* Optional recording never changes a control decision. */ }
 }
+
 }
