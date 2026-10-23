@@ -100,6 +100,12 @@ struct Diagnostics {
     int requested=0, gate_requested=0, aim_mode=0;
     int model_rotation_count=0, tracker_model=0;
     double observation_remaining_ms=NAN, model_speed_mps=NAN, rx_age_ms=NAN;
+    // Full-cycle snapshot, consumed only by the opt-in diagnostic writer.
+    bool synchronized=false;
+    double planned_yaw=NAN,planned_pitch=NAN;
+    Input input;
+    Config fire_config;
+    center_fire::Config center_config;
 };
 
 class Gate {
@@ -109,8 +115,11 @@ class Gate {
     int target_id_ = 0, aim_mode_ = 0;
     uint64_t last_single_shot_id_ = 0;
 public:
-    explicit Gate(Config config = Config::from_environment()) : config_(config) {}
+    explicit Gate(Config config = Config::from_environment(),
+                  center_fire::Config center_config = center_fire::Config::from_environment())
+        : config_(config), center_window_(center_config) {}
     const Config& config() const { return config_; }
+    const center_fire::Config& center_config() const { return center_window_.config(); }
 
     Decision evaluate(const Input& in) {
         Decision out;

@@ -279,10 +279,17 @@ namespace hardware {
     }
 
     void TimedSerial::record_fire_diagnostics(const fire_control::Input &fire_input,
-                                              const fire_control::Decision &fire_decision, bool holding_shot) {
+                                              const fire_control::Decision &fire_decision, bool holding_shot,
+                                              float planned_yaw, float planned_pitch) {
         fire_control::Diagnostics diagnostic;
         diagnostic.valid = true;
         diagnostic.decision = fire_decision;
+        diagnostic.synchronized = true;
+        diagnostic.input = fire_input;
+        diagnostic.planned_yaw = planned_yaw;
+        diagnostic.planned_pitch = planned_pitch;
+        diagnostic.fire_config = fire_gate_.config();
+        diagnostic.center_config = fire_gate_.center_config();
         diagnostic.requested = command_cache_.fire_enable;
         diagnostic.gate_requested = fire_input.requested;
         diagnostic.aim_mode = fire_input.aim_mode;
@@ -328,6 +335,7 @@ namespace hardware {
             pitch_target = current.pitch();
             command_cache_ = RobotCommand{};
         }
+        const float planned_yaw = yaw_target, planned_pitch = pitch_target;
         const bool holding_shot = std::chrono::steady_clock::now() < shot_hold_until_;
         if (holding_shot) {
             yaw_target = shot_hold_yaw_;
@@ -351,7 +359,7 @@ namespace hardware {
             filtered_pitch_deg_ = pitch_target;
             filtered_target_initialized_ = true;
         }
-        record_fire_diagnostics(fire_input, fire_decision, holding_shot);
+        record_fire_diagnostics(fire_input, fire_decision, holding_shot, planned_yaw, planned_pitch);
         driver_->transmit_cmd(yaw_target, command_cache_.yaw_speed, pitch_target, command_cache_.pitch_speed,
                               command_cache_.yaw_acc, command_cache_.pitch_acc, command_cache_.distance,
                               fire_decision.advice, command_cache_.target_id);

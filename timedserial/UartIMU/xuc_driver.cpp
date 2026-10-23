@@ -5,6 +5,7 @@
 #include "xuc_driver.hpp"
 #include "xuc_conventions.hpp"
 #include "hero_diagnostics.hpp"
+#include "hit_diagnostics.hpp"
 
 #include <cerrno>
 #include <cmath>
@@ -199,6 +200,9 @@ void XucDriver::log_transmission(const std::array<uint8_t, 31> &pkt, float pitch
     float constrained_pitch, mcu_yaw;
     std::memcpy(&constrained_pitch, pkt.data() + 1, sizeof(float));
     std::memcpy(&mcu_yaw, pkt.data() + 5, sizeof(float));
+    hit_diagnostics::append(fire_diagnostics_,
+        {mcu_yaw,constrained_pitch,pkt[21],static_cast<int>(written),fire_mode_enabled,dry_run,track_only(),
+         dry_run?"dry_run":written==31?"written":"incomplete_write"},PROJECT_DIR);
     const bool limited = constrained_pitch != pitch;
     const uint64_t key = uint64_t(target_id) | (uint64_t(pkt[21]) << 8) | (uint64_t(fire_mode_enabled) << 16) |
                          (uint64_t(limited) << 17);
@@ -246,8 +250,13 @@ void XucDriver::transmit_cmd(float yaw, float yaw_spd, float pitch, float pitch_
     // logging while guaranteeing that nothing is written to the UART.
     const bool fire_mode_enabled = fire_mode_enabled_.load();
     const bool dry_run = xuc_dry_run();
-    if (!fire_mode_enabled && !dry_run) return;
+    if (!fire_mode_enabled && !dry_run) {
+        hit_diagnostics::append(fire_diagnostics_,{NAN,NAN,0,0,false,false,track_only(),"link_disabled"},PROJECT_DIR);
+        return;
+    }
     if (!std::isfinite(yaw) || !std::isfinite(pitch) || !std::isfinite(dist) || dist < 0.0f) {
+        hit_diagnostics::append(fire_diagnostics_,
+            {NAN,NAN,0,0,fire_mode_enabled,dry_run,track_only(),"invalid_command"},PROJECT_DIR);
         LOGW_S("[HeroXuc] rejected invalid final angle/distance; no UART write");
         LOGW_F("[HeroXuc] rejected invalid final angle/distance; no UART write");
         return;

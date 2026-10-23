@@ -8,6 +8,9 @@
 #include "chrono"
 #include <iostream>
 #include <filesystem>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
 #if INFERENCE_BACKEND_TYPE == 1
 #include "ONNX/ONNX.hpp"
@@ -44,7 +47,33 @@ namespace detect {
 #else
 #error "Invalid INFERENCE_BACKEND_TYPE"
 #endif
+        const char *profile = std::getenv("AUTOAIM_PREVIEW_PROFILE");
+        profile_preview_ = profile && std::strcmp(profile, "1") == 0;
         LOGM_S("[detect] model loaded");
+    }
+
+    void DetectSubModule::show_preview(const ThreadDataPack &data) {
+        using Clock = std::chrono::steady_clock;
+        const auto started = Clock::now();
+        const cv::Mat &image = preview_renderer_.render(data.frame, data.bboxes);
+        if (image.empty()) return;
+        const auto rendered = Clock::now();
+        autoaim_gui::imshow("detect_submodule", image);
+        const auto submitted = Clock::now();
+        const int key = autoaim_gui::waitKey(1);
+        const auto events_done = Clock::now();
+        if (key == 'p' || key == 'P') {
+            std::filesystem::create_directories("./frames/");
+            cv::imwrite("./frames/frame_" + std::to_string(preview_snapshot_sequence_++) + ".png", image);
+        }
+        const auto completed = Clock::now();
+        const auto ms = [](auto a, auto z) { return std::chrono::duration<double,std::milli>(z-a).count(); };
+        if (profile_preview_ && logfile && logfile->out && logfile->out != stdout && logfile->out != stderr)
+            std::fprintf(logfile->out,
+                "[DIAG_PREVIEW] frame_index=%d render_ms=%.4f submit_ms=%.4f events_ms=%.4f "
+                "snapshot_ms=%.4f total_ms=%.4f events_per_frame=1 preview_w=%d preview_h=%d opencv_threads=%d\n",
+                data.index, ms(started,rendered), ms(rendered,submitted), ms(submitted,events_done),
+                ms(events_done,completed), ms(started,completed), image.cols, image.rows, cv::getNumThreads());
     }
 
     SubModuleResult DetectSubModule::process(std::shared_ptr<ThreadDataPack> data, const pipeline::BasicTask *parent) {
@@ -66,49 +95,7 @@ namespace detect {
         }
         data->bboxes = output_bboxes;
 
-        static int frame_counter = 0;
-        static std::string output_dir = "./frames/";
-
-        if (config_.debug.show_image) {
-            // Internal color ids: 0 red, 1 blue, 2 gray (OpenCV uses BGR).
-            static const cv::Scalar colors[3] = {{0, 0, 255}, {255, 0, 0}, {255, 255, 255}};
-            cv::Mat im2show = data->frame.clone();
-            for (const auto &b : data->bboxes) {
-                const int color_index = (b.color_id >= 0 && b.color_id < 3) ? b.color_id : 2;
-                const cv::Scalar &box_color = colors[color_index];
-                cv::line(im2show, b.pts[0], b.pts[1], box_color, 4, cv::LINE_AA);
-                cv::line(im2show, b.pts[1], b.pts[2], box_color, 4, cv::LINE_AA);
-                cv::line(im2show, b.pts[2], b.pts[3], box_color, 4, cv::LINE_AA);
-                cv::line(im2show, b.pts[3], b.pts[0], box_color, 4, cv::LINE_AA);
-                static const char *labels[] = {"RED", "BLUE", "GRAY"};
-                const std::string label = std::string(labels[color_index]) + " id=" + std::to_string(b.tag_id);
-                cv::putText(im2show, label, b.pts[0], cv::FONT_HERSHEY_SIMPLEX, 1.0, box_color, 3, cv::LINE_AA);
-            }
-
-            const int max_display_width = 800;
-            const int max_display_height = 560;
-            const double display_scale =
-                std::min(1.0, std::min(static_cast<double>(max_display_width) / im2show.cols,
-                                       static_cast<double>(max_display_height) / im2show.rows));
-            if (display_scale < 1.0) {
-                cv::resize(im2show, im2show, cv::Size(), display_scale, display_scale, cv::INTER_AREA);
-            }
-
-            static bool dir_created = false;
-            if (!dir_created) {
-                std::filesystem::create_directories(output_dir);
-                dir_created = true;
-            }
-
-            int key = autoaim_gui::waitKey(1);
-            if (key == 'p' || key == 'P') {
-                std::string filename = output_dir + "frame_" + std::to_string(frame_counter++) + ".png";
-                cv::imwrite(filename, im2show);
-            }
-
-            autoaim_gui::imshow("detect_submodule", im2show);
-            autoaim_gui::waitKey(1);
-        }
+        if (config_.debug.show_image && !autoaim_gui::headless()) show_preview(*data);
 
         if (config_.debug.log_text) {
             LOGM_S("[detect] Info: detected %ld objects", data->bboxes.size());

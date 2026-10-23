@@ -76,7 +76,7 @@ namespace predict {
 
         // on axcl
         /// @brief 暂时丢失计数阈值，丢失超过此值返回空闲状态
-        // Visual loss is bounded in seconds, independently of detector FPS.
+        const int temp_lost_counter_threshold = 30; // Upstream processed-frame policy.
 
         const double yaw_speed_diverge_threshold = 3;
 
@@ -223,10 +223,6 @@ namespace predict {
 
         /// @brief 暂时丢失计数器
         int temp_lost_counter;
-        tracking_policy::ObservationGate observation_gate;
-        Eigen::Vector4d pending_switch_measurement_ = Eigen::Vector4d::Zero();
-        TP pending_switch_time_{};
-        bool pending_switch_ = false;
 
         /// @brief 暂时丢失时间点
         TP temp_lost_tp;
@@ -253,7 +249,7 @@ namespace predict {
          * @details 设置四个独立的KF：yaw, x, y, z坐标滤波器
          */
 
-        bool process_observation(const Eigen::Vector4d &measurement, const TP &tp, int &count, bool &confirmed_switch,
+        void process_observation(const Eigen::Vector4d &measurement, const TP &tp, int &count,
                                  TrackerDiagnostic &diagnostic);
         void update_yaw_filter(bool observed, bool armor_switched);
         void update_armor_filters(bool observed, bool armor_switched);
@@ -282,7 +278,7 @@ namespace predict {
         void update_parameter();
 
         // === 滤波器重置函数组 ===
-        void reset_yaw_kf(bool preserve_velocity = false); ///< Rebase at a switch; real resets clear velocity.
+        void reset_yaw_kf(bool preserve_velocity); ///< Rebase at a switch; real resets clear velocity.
         void reset_armor_x_kf();                           ///< 重置X坐标滤波器
         void reset_armor_y_kf();                           ///< 重置Y坐标滤波器
         void reset_armor_z_kf();                           ///< 重置Z坐标滤波器

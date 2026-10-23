@@ -65,7 +65,7 @@ namespace hardware {
         fire_control::Input make_fire_input(bool valid, float desired_yaw, float desired_pitch, float sent_yaw,
                                             float sent_pitch, bool holding_shot);
         void record_fire_diagnostics(const fire_control::Input &input, const fire_control::Decision &decision,
-                                     bool holding_shot);
+                                     bool holding_shot, float planned_yaw, float planned_pitch);
         void log_transmission(float yaw, float pitch, uint8_t advice);
         void transmit_cached_command();
 

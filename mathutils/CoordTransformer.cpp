@@ -15,6 +15,26 @@ namespace mathutils {
     // 定义静态成员变量
     std::unique_ptr<CoordTransformer> CoordTransformer::instance_ = nullptr;
 
+    void CoordTransformer::load_armor_geometry(const cv::FileStorage &config) {
+        const auto width_node = config["armor_small_width_m"];
+        const auto height_node = config["armor_small_height_m"];
+        if (width_node.empty() && height_node.empty()) return;
+        if (width_node.empty() || height_node.empty())
+            throw std::runtime_error("measured small armor requires both width and height");
+        double width = 0, height = 0;
+        width_node >> width;
+        height_node >> height;
+        if (!std::isfinite(width) || !std::isfinite(height) || width <= 0 || height <= 0 || width > 1 || height > 1)
+            throw std::runtime_error("measured small armor dimensions must be finite metres in (0,1]");
+        measured_small_armor_ = {{-width/2,-height/2,0}, {-width/2,height/2,0},
+                                 {width/2,height/2,0}, {width/2,-height/2,0}};
+    }
+
+    const std::vector<cv::Point3d> &CoordTransformer::small_armor_model(int color_id) const {
+        if (!measured_small_armor_.empty()) return measured_small_armor_;
+        return color_id == 0 ? pw_red_small : pw_blue_small;
+    }
+
     void CoordTransformer::load_gimbal_geometry() {
         cv::FileStorage geometry(PROJECT_DIR "/asset/gimbal_geometry_hero.yml", cv::FileStorage::READ);
         cv::Mat offset;
@@ -67,6 +87,7 @@ namespace mathutils {
         load_gimbal_geometry();
         // 打开相机参数文件
         cv::FileStorage fin(camera_param, cv::FileStorage::READ);
+        load_armor_geometry(fin);
 
         // 读取相机到IMU的外参（平移向量和旋转矩阵）
         fin["T_c2i"] >> T_camera2imu_MAT; // 相机到IMU的平移向量
@@ -135,7 +156,7 @@ namespace mathutils {
     std::vector<cv::Point3d> CoordTransformer::armor_model(int armor_number, int color_id) const {
         std::vector<cv::Point3d> pw_cur;
         if (armor_policy::ignore_armor_id()) {
-            pw_cur = color_id == 0 ? pw_red_small : pw_blue_small;
+            pw_cur = small_armor_model(color_id);
         } else if (adjust) {
             double pw_x = pw_length / 1000.0 / 2.0;
             double pw_y = pw_width / 1000.0 / 2.0;
@@ -147,14 +168,14 @@ namespace mathutils {
                 if (armor_number == 0 || armor_number == 1 || armor_number == 8)
                     pw_cur = pw_red_big;
                 else
-                    pw_cur = pw_red_small;
+                    pw_cur = small_armor_model(color_id);
             } else {
                 if (armor_number == 3 && std::getenv("AUTOAIM_BLUE3_TEST_TARGET") != nullptr)
                     pw_cur = pw_blue_3_test;
                 else if (armor_number == 0 || armor_number == 1 || armor_number == 8)
                     pw_cur = pw_blue_big;
                 else
-                    pw_cur = pw_blue_small;
+                    pw_cur = small_armor_model(color_id);
             }
         }
         return pw_cur;

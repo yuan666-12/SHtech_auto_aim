@@ -8,6 +8,7 @@
 
 // submodules
 #include "backend.hpp"
+#include "preview_renderer.hpp"
 
 // modules
 #include "common.hpp"
@@ -48,6 +49,10 @@ namespace detect
                     const pipeline::BasicTask* parent) override;
 
     private:
+        void show_preview(const ThreadDataPack &data);
+        PreviewRenderer preview_renderer_;
+        bool profile_preview_ = false;
+        int preview_snapshot_sequence_ = 0;
         DetectConfig config_;
         std::unique_ptr<BackEnd> model; /*!< 推理模型指针 */
     };

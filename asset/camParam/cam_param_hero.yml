@@ -1,5 +1,8 @@
 %YAML:1.0
 ---
+# Measured light-bar centreline geometry, 2026-10-23. Not the 135 mm outer width.
+armor_small_width_m: 0.1275
+armor_small_height_m: 0.055
 # Active Hero extrinsics, updated 2026-10-12 with user approval.
 # R: R-only robust hand-eye result, 33/34 samples; direction RMS 0.529515 deg.
 # Data: hero_extrinsic_20261012_180418_443261; sample 27 excluded for R.

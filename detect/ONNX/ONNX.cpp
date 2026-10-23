@@ -5,6 +5,9 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <charconv>
+#include <stdexcept>
+#include <cstring>
 
 // SKD250526 output: 8 corner offsets, confidence, 8 armor-class scores,
 // 2 color scores and 2 armor-size scores.  The corner offsets require the
@@ -16,11 +19,27 @@ static constexpr float CONF_THRESH = 0.1f;
 static constexpr float NMS_THRESH = 0.45f;
 static constexpr int MAX_DET = 128;
 
+namespace {
+int configured_threads() {
+    const char *value = std::getenv("AUTOAIM_ONNX_THREADS");
+    if (!value) return 4;
+    int threads = 0;
+    const auto end = value + std::strlen(value);
+    const auto parsed = std::from_chars(value, end, threads);
+    if (parsed.ec != std::errc{} || parsed.ptr != end || threads < 0 || threads > 64)
+        throw std::invalid_argument("AUTOAIM_ONNX_THREADS must be an integer in [0,64]");
+    return threads;
+}
+}
+
 ONNX::ONNX(const std::string &model_path)
     : env_(ORT_LOGGING_LEVEL_WARNING, "autoaim"),
       memory_info_(Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault))
 {
-    session_options_.SetIntraOpNumThreads(1);
+    intra_threads_ = configured_threads();
+    session_options_.SetIntraOpNumThreads(intra_threads_);
+    const char *profile = std::getenv("AUTOAIM_ONNX_PROFILE");
+    profile_enabled_ = profile && std::strcmp(profile, "1") == 0;
     session_options_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 
     session_ = std::make_unique<Ort::Session>(env_, model_path.c_str(), session_options_);
@@ -41,21 +60,30 @@ ONNX::ONNX(const std::string &model_path)
     auto input_tensor_info = input_type_info.GetTensorTypeAndShapeInfo();
     input_shape_ = input_tensor_info.GetShape();
 
+    if (input_shape_.size() != 4) throw std::runtime_error("ONNX expects a four-dimensional NCHW input");
     if (input_shape_[0] == -1) input_shape_[0] = 1;
+    if (input_shape_ != std::vector<int64_t>{1, 3, input_h_, input_w_} ||
+        input_tensor_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
+        throw std::runtime_error("ONNX backend expects float32 input [1,3,512,640]");
+    input_values_.resize(3 * input_h_ * input_w_);
+    for (int channel = 0; channel < 3; ++channel)
+        input_planes_[channel] = cv::Mat(input_h_, input_w_, CV_32F,
+                                         input_values_.data() + channel * input_h_ * input_w_);
+    input_tensor_ = Ort::Value::CreateTensor<float>(memory_info_, input_values_.data(), input_values_.size(),
+                                                   input_shape_.data(), input_shape_.size());
+    std::cerr << "[ONNX] CPU intra_op_threads=" << intra_threads_ << " profile=" << profile_enabled_ << std::endl;
 }
 
-void ONNX::preprocess(const cv::Mat &src, std::vector<float> &input_tensor_values) {
-    cv::Mat resized, float_img;
-    cv::resize(src, resized, cv::Size(input_w_, input_h_));
-    resized.convertTo(float_img, CV_32FC3, 1.0 / 255.0);
-
-    std::vector<cv::Mat> chw(3);
-    cv::split(float_img, chw);
-    for (int c = 0; c < 3; ++c) {
-        input_tensor_values.insert(input_tensor_values.end(),
-                                   (float*)chw[c].datastart,
-                                   (float*)chw[c].dataend);
+void ONNX::preprocess(const cv::Mat &src) {
+    if (src.empty() || src.type() != CV_8UC3)
+        throw std::invalid_argument("ONNX preprocessing expects a nonempty RGB uint8 image");
+    const cv::Mat *input = &src;
+    if (src.cols != input_w_ || src.rows != input_h_) {
+        cv::resize(src, resized_input_, cv::Size(input_w_, input_h_));
+        input = &resized_input_;
     }
+    input->convertTo(float_input_, CV_32FC3, 1.0 / 255.0);
+    cv::split(float_input_, input_planes_.data());
 }
 
 void ONNX::postprocess(const float* output_data, size_t output_count,
@@ -154,35 +182,35 @@ void ONNX::postprocess(const float* output_data, size_t output_count,
 }
 
 void ONNX::operator()(const cv::Mat &src, std::vector<bbox_t> &det) {
-    std::vector<float> input_tensor_values;
-    preprocess(src, input_tensor_values);
-
-    Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
-        memory_info_, input_tensor_values.data(), input_tensor_values.size(),
-        input_shape_.data(), input_shape_.size());
-
-    // 用 auto 接收，避免 Ort::Value 拷贝（拷贝构造函数已删除）
-    auto output_tensors = session_->Run(
-        Ort::RunOptions{nullptr},
-        input_names_.data(), &input_tensor, 1,
-        output_names_.data(), 1);
-
-    Ort::Value& output_tensor = output_tensors[0];
-
-    static bool shape_logged = false;
-    if (!shape_logged) {
+    using Clock = std::chrono::steady_clock;
+    const auto started = Clock::now();
+    preprocess(src);
+    const auto prepared = Clock::now();
+    auto output_tensors = session_->Run(Ort::RunOptions{nullptr}, input_names_.data(), &input_tensor_, 1,
+                                         output_names_.data(), 1);
+    const auto inferred = Clock::now();
+    Ort::Value &output_tensor = output_tensors[0];
+    if (!shape_logged_) {
         const auto output_shape = output_tensor.GetTensorTypeAndShapeInfo().GetShape();
         std::cerr << "[ONNX] runtime output shape:";
         for (const auto dim : output_shape) std::cerr << ' ' << dim;
         std::cerr << std::endl;
-        shape_logged = true;
+        shape_logged_ = true;
     }
-
     float *output_data = output_tensor.GetTensorMutableData<float>();
-    size_t output_count = output_tensor.GetTensorTypeAndShapeInfo().GetElementCount();
-
-    float scale_x = static_cast<float>(src.cols) / input_w_;
-    float scale_y = static_cast<float>(src.rows) / input_h_;
-
+    const size_t output_count = output_tensor.GetTensorTypeAndShapeInfo().GetElementCount();
+    const float scale_x = static_cast<float>(src.cols) / input_w_;
+    const float scale_y = static_cast<float>(src.rows) / input_h_;
     postprocess(output_data, output_count, det, scale_x, scale_y);
+    const auto completed = Clock::now();
+    const auto elapsed = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b-a).count(); };
+    last_timing_ = {elapsed(started, prepared), elapsed(prepared, inferred), elapsed(inferred, completed),
+                    elapsed(started, completed)};
+    if (profile_enabled_ && logfile && logfile->out && logfile->out != stdout && logfile->out != stderr)
+        std::fprintf(logfile->out,
+                     "[DIAG_ONNX] sequence=%llu threads=%d preprocess_ms=%.4f inference_ms=%.4f "
+                     "postprocess_ms=%.4f total_ms=%.4f\n",
+                     static_cast<unsigned long long>(++profile_sequence_), intra_threads_,
+                     last_timing_.preprocess_ms, last_timing_.inference_ms, last_timing_.postprocess_ms,
+                     last_timing_.total_ms);
 }

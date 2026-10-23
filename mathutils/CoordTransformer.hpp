@@ -99,6 +99,9 @@ namespace mathutils {
         Eigen::Vector3d T_pivot2imu = Eigen::Vector3d::Zero();
 
         std::vector<cv::Point3d> armor_model(int armor_number, int color_id) const;
+        std::vector<cv::Point3d> measured_small_armor_;
+        void load_armor_geometry(const cv::FileStorage &config);
+        const std::vector<cv::Point3d> &small_armor_model(int color_id) const;
 
         void load_gimbal_geometry();
 

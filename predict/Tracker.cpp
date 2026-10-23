@@ -26,6 +26,7 @@ namespace predict {
         Eigen::Vector4d input = Eigen::Vector4d::Zero();
         int input_count, state_before, count_before, trust_before, model_before;
         double observation_gap_ms, update_age_before_ms, frame_dt_ms;
+        double yaw_rate_before;
         const char *kind;
         const char *gate = "not_called";
         const char *reject_reason = "none";
@@ -41,7 +42,8 @@ namespace predict {
                   t.last_observation_update_time == std::chrono::steady_clock::time_point{}
                       ? INFINITY
                       : std::chrono::duration<double, std::milli>(started - t.last_observation_update_time).count()),
-              frame_dt_ms(std::chrono::duration<double, std::milli>(tp - previous_tp).count()), kind(operation) {
+              frame_dt_ms(std::chrono::duration<double, std::milli>(tp - previous_tp).count()),
+              yaw_rate_before(t.yaw_state(1)), kind(operation) {
             if (count > 0) input = z;
         }
         ~TrackerDiagnostic() noexcept {
@@ -61,7 +63,7 @@ namespace predict {
                 "count_before=%d count=%d trust_before=%d trusted=%d model_before=%d model=%d "
                 "observed=%d rejected=%d filter_reset=%d armor_switched=%d finite=%d "
                 "frame_dt_ms=%.3f obs_gap_ms=%.3f update_age_before_ms=%.3f update_age_ms=%.3f "
-                "track_ms=%.3f input_y=%.6f input_x=%.6f input_z=%.6f input_yaw=%.6f\n",
+                "track_ms=%.3f input_y=%.6f input_x=%.6f input_z=%.6f input_yaw=%.6f yaw_rate_before=%.9f yaw_rate=%.9f\n",
                 std::chrono::duration<double, std::milli>(std::chrono::system_clock::now().time_since_epoch()).count(),
                 static_cast<long long>(
                     std::chrono::duration_cast<std::chrono::nanoseconds>(image_time.time_since_epoch()).count()),
@@ -72,7 +74,22 @@ namespace predict {
                 int(target.measurement_rejected), int(target.filter_reset), int(armor_switched), int(finite),
                 frame_dt_ms, observation_gap_ms, update_age_before_ms, update_age,
                 std::chrono::duration<double, std::milli>(now - started).count(), input[0], input[1], input[2],
-                input[3]);
+                input[3], yaw_rate_before, target.yaw_state(1));
+            const auto &s = target.tracked_state;
+            const auto &m = target.tracked_measurement;
+            std::fprintf(logfile->out,
+                "[DIAG_MODEL] image_ns=%lld tracker=%p state=%d trusted=%d count=%d model=%d "
+                "observed=%d rejected=%d filter_reset=%d cy=%.9f vy=%.9f cx=%.9f vx=%.9f "
+                "cz=%.9f vz=%.9f phase=%.9f omega=%.9f radius=%.9f dr=%.9f dz=%.9f "
+                "my=%.9f mx=%.9f mz=%.9f myaw=%.9f\n",
+                static_cast<long long>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    image_time.time_since_epoch()).count()), tracker,
+                static_cast<int>(target.predictor_state), int(target.vehicle_model_trust),
+                target.vehicle_model_rotation_count, static_cast<int>(target.updating_model_type),
+                int(target.observation_updated), int(target.measurement_rejected), int(target.filter_reset),
+                s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7], s[8], s[9], s[10],
+                m[0], m[1], m[2], m[3]);
+
         }
     };
 } // namespace predict
@@ -126,7 +143,6 @@ namespace predict {
         target.measurement_rejected = false;
         target.filter_reset = true;
         target.raw_measurement = measurement;
-        observation_gate.reset(measurement, tp);
         dt = 0.0;
         detecting_counter = 0;
         temp_lost_counter = 0;
@@ -135,7 +151,7 @@ namespace predict {
 
         // 重置所有滤波器到初始状态
         reset_whole_state_ekf();
-        reset_yaw_kf();
+        reset_yaw_kf(false);
         reset_armor_x_kf();
         reset_armor_y_kf();
         reset_armor_z_kf();
@@ -171,53 +187,27 @@ namespace predict {
      * @return 更新后的目标状态引用
      * @details 执行完整的跟踪流程：预测、更新、模型选择、异常检测
      */
-    bool Tracker::process_observation(const Eigen::Vector4d &measurement, const TP &tp, int &same_id_armor_count,
-                                      bool &confirmed_pending_switch, TrackerDiagnostic &diagnostic) {
-        const bool previous_rejection = target.measurement_rejected;
+    void Tracker::process_observation(const Eigen::Vector4d &measurement, const TP &tp,
+                                      int &same_id_armor_count, TrackerDiagnostic &diagnostic) {
         target.observation_updated = false;
         target.measurement_rejected = false;
         target.filter_reset = false;
-        if (same_id_armor_count > 0) {
-            target.raw_measurement = measurement;
-            const double age = tracking_policy::observation_age(target.last_observation_time, tp);
-            if (age > tracking_policy::observation_timeout_s && !previous_rejection) {
-                diagnostic.reset_reason = "observation_timeout_on_arrival";
-                TP reset_time = tp;
-                reset_target(measurement, reset_time);
-                return false;
-            }
-            if (!observation_gate.consider(measurement, tp)) {
-                diagnostic.gate = "rejected";
-                diagnostic.reject_reason = !measurement.allFinite() ? "nonfinite_measurement"
-                                                                    : (age <= 0.0 ? "nonincreasing_measurement_time"
-                                                                                  : "unconfirmed_position_jump");
-                pending_switch_ =
-                    measurement.allFinite() &&
-                    (measurement.head<3>() - target.tracked_measurement.head<3>()).norm() > same_position_threshold &&
-                    std::abs(mathutils::limit_rad(measurement(3) - target.tracked_measurement(3))) >= M_PI_4;
-                if (pending_switch_) {
-                    pending_switch_measurement_ = measurement;
-                    pending_switch_time_ = tp;
-                }
-                same_id_armor_count = 0;
-                target.measurement_rejected = true;
-            } else {
-                // A bounded loss is a predict-only interval. An accepted
-                // same-target observation updates the existing filters and
-                // preserves learned geometry and confirmed armor switches.
-                diagnostic.gate = "accepted";
-                const double pending_age = tracking_policy::observation_age(pending_switch_time_, tp);
-                confirmed_pending_switch =
-                    pending_switch_ && pending_age > 0 && pending_age <= tracking_policy::observation_timeout_s &&
-                    (measurement.head<3>() - pending_switch_measurement_.head<3>()).norm() <= same_position_threshold &&
-                    std::abs(mathutils::limit_rad(measurement(3) - pending_switch_measurement_(3))) < M_PI_4;
-                pending_switch_ = false;
-                target.last_observation_time = tp;
-                target.last_observation_update_time = std::chrono::steady_clock::now();
-                target.observation_updated = true;
-            }
+        if (same_id_armor_count <= 0) return;
+        target.raw_measurement = measurement;
+        // Upstream accepts finite same-target observations directly. Keep the
+        // runtime's timestamps/flags, without its former jump-confirmation gate.
+        if (!measurement.allFinite() || tp <= target.last_observation_time) {
+            diagnostic.gate = "rejected";
+            diagnostic.reject_reason = measurement.allFinite() ? "nonincreasing_measurement_time"
+                                                               : "nonfinite_measurement";
+            target.measurement_rejected = true;
+            same_id_armor_count = 0;
+            return;
         }
-        return true;
+        diagnostic.gate = "accepted";
+        target.last_observation_time = tp;
+        target.last_observation_update_time = std::chrono::steady_clock::now();
+        target.observation_updated = true;
     }
 
     void Tracker::update_yaw_filter(bool observed, bool armor_switched) {
@@ -231,6 +221,7 @@ namespace predict {
                                                                    target.yaw_state(0, 0));
                 target.yaw_state = yaw_kf.update(target.yaw_measurement);
             } else {
+                // A plate switch changes phase, not the vehicle angular velocity.
                 reset_yaw_kf(true);
                 if (debug) std::cout << "[predict] yaw kf reset" << std::endl;
             }
@@ -260,20 +251,13 @@ namespace predict {
                 reset_armor_z_kf();
                 if (debug) std::cout << "[predict] vehicle model update only" << std::endl;
             }
-        } else {
-            target.armor_x_state = armor_x_kf.predict();
-            target.armor_y_state = armor_y_kf.predict();
-            target.armor_z_state = armor_z_kf.predict();
-            target.yaw_state = yaw_kf.predict();
-            if (debug) std::cout << "[predict] no same id armor" << std::endl;
         }
     }
 
     void Tracker::update_vehicle_filter(int same_id_armor_count, int tag_id, bool armor_switched,
                                         TrackerDiagnostic &diagnostic) {
         if (same_id_armor_count) {
-            if (target.updating_model_type != UpdatingModelType::ARMOR_MODEL ||
-                target.vehicle_model_rotation_count > 0) {
+            if (target.updating_model_type != UpdatingModelType::ARMOR_MODEL) {
                 if (same_id_armor_count == 1) {
                     int id = match_armor_id(target.tracked_measurement);
                     target.tracked_state = whole_state_ekf.update(target.tracked_measurement, id);
@@ -281,8 +265,11 @@ namespace predict {
                     int id = match_armor_id(target.tracked_measurement);
                     target.tracked_state = whole_state_ekf.update(target.tracked_measurement, id);
                 }
-                target.vehicle_model_trust = target.vehicle_model_rotation_count >= least_rotate_count;
                 if (armor_switched) {
+                    target.ab_counter = 1 - target.ab_counter;
+                    if (target.vehicle_model_rotation_count < least_rotate_count)
+                        ++target.vehicle_model_rotation_count;
+                    target.vehicle_model_trust = target.vehicle_model_rotation_count >= least_rotate_count;
                     if (debug) std::cout << "[predict] armor jump" << std::endl;
                 }
                 if (debug) std::cout << "[predict] ekf update" << std::endl;
@@ -296,7 +283,7 @@ namespace predict {
                     target.tracked_state(9, 0) = 0.0;
                 }
             } else {
-                diagnostic.reset_reason = "vehicle_model_initialization_before_first_switch";
+                diagnostic.reset_reason = "upstream_armor_mode_vehicle_reset";
                 reset_whole_state_ekf();
                 if (debug) std::cout << "[predict] armor model update only" << std::endl;
             }
@@ -309,9 +296,7 @@ namespace predict {
                                  const Eigen::Matrix<double, 4, 1> &secondary_measurement, int same_id_armor_count,
                                  const int tag_id, const TP &tp, const double attitude_yaw) {
         TrackerDiagnostic diagnostic(this, target, measurement, tp, last_tp, same_id_armor_count, "track");
-        bool confirmed_pending_switch = false;
-        if (!process_observation(measurement, tp, same_id_armor_count, confirmed_pending_switch, diagnostic))
-            return target;
+        process_observation(measurement, tp, same_id_armor_count, diagnostic);
         dt = duration_cast<microseconds>(tp - last_tp).count() / 1e6;
         if (!std::isfinite(dt) || dt <= 0.0 || dt > 1.0) {
             diagnostic.reset_reason = "invalid_frame_dt";
@@ -320,7 +305,6 @@ namespace predict {
                 target.predictor_state = TrackingState::IDLE;
                 target.vehicle_model_trust = false;
                 target.vehicle_model_rotation_count = 0;
-                pending_switch_ = false;
                 return target;
             }
             TP reset_time = tp;
@@ -330,15 +314,8 @@ namespace predict {
                                                 target.tracked_measurement(2, 0));
         Eigen::Matrix<double, 3, 1> tracked_pw(measurement(1, 0), measurement(0, 0), measurement(2, 0));
         double min_position_diff = (measured_pw - tracked_pw).norm();
-        const double normal_change = std::abs(mathutils::limit_rad(measurement(3) - target.tracked_measurement(3)));
-        if (same_id_armor_count > 0 && normal_change < M_PI_4) min_position_diff = 0.0;
-        const bool armor_switched =
-            same_id_armor_count > 0 && (min_position_diff > same_position_threshold || confirmed_pending_switch);
+        const bool armor_switched = same_id_armor_count > 0 && min_position_diff > same_position_threshold;
         diagnostic.armor_switched = armor_switched;
-        if (armor_switched) {
-            target.ab_counter = 1 - target.ab_counter;
-            if (target.vehicle_model_rotation_count < least_rotate_count) ++target.vehicle_model_rotation_count;
-        }
         if (same_id_armor_count) {
             target.tracked_measurement = measurement;
             target.tracked_measurement(3, 0) = mathutils::limit_rad(target.tracked_measurement(3, 0));
@@ -360,10 +337,6 @@ namespace predict {
             std::cout << "dt: " << dt << std::endl;
             std::cout << "[predict] predict" << std::endl;
         }
-        const double diagnostic_age = tracking_policy::observation_age(target.last_observation_time, tp);
-        if (diagnostic_age < 0.0 || diagnostic_age >= tracking_policy::observation_timeout_s)
-            diagnostic.reset_reason =
-                diagnostic_age < 0.0 ? "negative_observation_age" : "observation_timeout_in_state_update";
         update_tracker_state(same_id_armor_count, tp);
         update_yaw_filter(same_id_armor_count > 0, armor_switched);
         tracker_model_select();
@@ -713,15 +686,8 @@ namespace predict {
      * @details 管理IDLE、DETECTING、TRACKING、TEMP_LOST四个状态之间的转换
      */
     void Tracker::update_tracker_state(const double same_id_armor_count, const TP &tp) {
-        const double age = tracking_policy::observation_age(target.last_observation_time, tp);
-        if (age < 0.0 || age >= tracking_policy::observation_timeout_s) {
-            target.predictor_state = TrackingState::IDLE;
-            target.vehicle_model_trust = false;
-            target.vehicle_model_rotation_count = 0;
-            pending_switch_ = false;
-            detecting_counter = temp_lost_counter = 0;
-            return;
-        }
+        // Ported from upstream e0914de: loss is counted in processed frames.
+        // Planner/TX observation freshness remains a separate, unchanged policy.
         if (target.predictor_state == TrackingState::DETECTING) {
             if (same_id_armor_count > 0) {
                 if (++detecting_counter > detecting_counter_threshold) {
@@ -732,14 +698,24 @@ namespace predict {
                 detecting_counter = 0;
                 target.predictor_state = TrackingState::IDLE;
             }
-        } else if (target.predictor_state == TrackingState::TRACKING && same_id_armor_count == 0) {
-            target.predictor_state = TrackingState::TEMP_LOST;
-            temp_lost_tp = tp;
+        } else if (target.predictor_state == TrackingState::TRACKING) {
+            if (same_id_armor_count == 0) {
+                temp_lost_counter = 1;
+                target.predictor_state = TrackingState::TEMP_LOST;
+                temp_lost_tp = tp;
+            }
+        } else if (target.predictor_state == TrackingState::TEMP_LOST) {
+            if (same_id_armor_count > 0) {
+                temp_lost_counter = 0;
+                target.predictor_state = TrackingState::TRACKING;
+            } else if (++temp_lost_counter > temp_lost_counter_threshold) {
+                temp_lost_counter = 0;
+                target.predictor_state = TrackingState::IDLE;
+                // Do not expose stale trust/count through the runtime interface.
+                target.vehicle_model_trust = false;
+                target.vehicle_model_rotation_count = 0;
+            }
         }
-        if (target.predictor_state == TrackingState::TEMP_LOST && same_id_armor_count > 0)
-            target.predictor_state = TrackingState::TRACKING;
-        // Within the observation deadline, an accepted reacquisition resumes
-        // tracking with the predicted filters instead of rebuilding the model.
     }
 
     /**
@@ -832,7 +808,6 @@ namespace predict {
         yaw_speed_diverge_counter = 0;
         target.vehicle_model_rotation_count = 0;
         target.vehicle_model_trust = false;
-        pending_switch_ = false;
     }
 
     /**
