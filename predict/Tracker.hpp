@@ -16,6 +16,7 @@
 
 // modules
 #include "common.hpp"
+#include "target_model.hpp"
 #include "Kalman.hpp"
 #include "tracking_policy.hpp"
 #include "math_tools.hpp"
@@ -97,6 +98,8 @@ namespace predict {
         const double outpost_fix_yaw_speed_threshold = 2.5;
 
       private:
+        const target_model::Config target_model_config = target_model::config();
+
         // === 配置参数 ===
         /// @brief 调试模式标志
         bool debug = false;

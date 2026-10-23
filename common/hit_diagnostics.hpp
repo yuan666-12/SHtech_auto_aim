@@ -1,5 +1,6 @@
 #pragma once
 #include "fire_control.hpp"
+#include "target_model.hpp"
 #include "diagnostic_session.hpp"
 #include <array>
 #include <cstdlib>
@@ -230,6 +231,9 @@ public:
         header<<"# schema=hero-hit-v1 pid="<<getpid()<<" project="<<std::quoted(project)
               <<" executable="<<std::quoted(exe.string())<<" build="
               <<std::quoted(std::string(__DATE__)+" "+__TIME__)
+              <<" target_model="<<target_model::config().name()
+              <<" radius_m="<<target_model::config().initial_radius_m()
+              <<" stationary_center="<<target_model::config().fixed()
               <<" config="<<std::quoted(config?config:"")<<'\n'<<columns<<'\n';
         const std::string detail_header=std::string(
             "# schema=hero-hit-geometry-v1 units=m,rad,s coords=world_xyz origin=gimbal_axis_intersection "

@@ -1,4 +1,5 @@
 #include "runtime_threads.hpp"
+#include "target_model.hpp"
 // Resource order: allocate, bind callbacks, start workers, join, release.
 #include <cstdlib>
 #include <algorithm>
@@ -202,6 +203,9 @@ bool init() {
     signal(SIGSEGV, segv_handler);
     screen = new Log();
     try {
+        const auto &target_config = target_model::config();
+        LOGM_S("[TargetModel] mode=%s radius_m=%.6f stationary_center=%d equal_height=%d",
+               target_config.name(), target_config.initial_radius_m(), target_config.fixed(), target_config.fixed());
         const auto thread_config = autoaim_runtime::configure_opencv_threads();
         LOGM_S("[Threads] OpenCV requested=%d effective=%d", thread_config.requested, thread_config.effective);
         const char *config = std::getenv("AUTOAIM_CONFIG");

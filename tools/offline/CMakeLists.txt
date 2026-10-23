@@ -73,3 +73,26 @@ set_tests_properties(headless_mock headless_real PROPERTIES ENVIRONMENT "AUTOAIM
 add_test(NAME gui_delegation COMMAND hero_headless_mock 0)
 set_tests_properties(gui_delegation PROPERTIES ENVIRONMENT "AUTOAIM_HEADLESS=0")
 add_test(NAME python_serial COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/check_serial_tool.py")
+
+add_executable(hero_fixed_target_check "${HERO_ROOT}/tools/hero_fixed_target_check.cpp")
+target_link_libraries(hero_fixed_target_check PRIVATE hero_check_core)
+foreach(profile free province_fixed)
+    add_test(NAME target_model_${profile} COMMAND hero_fixed_target_check)
+    set_tests_properties(target_model_${profile} PROPERTIES
+        ENVIRONMENT "AUTOAIM_HEADLESS=1;AUTOAIM_TARGET_MODEL=${profile};AUTOAIM_TARGET_RADIUS_M=0.265"
+        TIMEOUT 30 RUN_SERIAL TRUE)
+endforeach()
+add_test(NAME target_model_radius_override COMMAND hero_fixed_target_check)
+set_tests_properties(target_model_radius_override PROPERTIES
+    ENVIRONMENT "AUTOAIM_HEADLESS=1;AUTOAIM_TARGET_MODEL=province_fixed;AUTOAIM_TARGET_RADIUS_M=0.3"
+    TIMEOUT 30 RUN_SERIAL TRUE)
+
+foreach(profile free province_fixed)
+    add_test(NAME vehicle_pipeline_${profile}
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/run_case.py"
+        "${CMAKE_CURRENT_BINARY_DIR}/pipeline-${profile}-xuc.log"
+        $<TARGET_FILE:hero_vehicle_model_check> "${HERO_ROOT}" --pipeline-only)
+    set_tests_properties(vehicle_pipeline_${profile} PROPERTIES
+        ENVIRONMENT "AUTOAIM_HEADLESS=1;AUTOAIM_XUC_DRY_RUN=1;AUTOAIM_TARGET_MODEL=${profile};AUTOAIM_TARGET_RADIUS_M=0.265"
+        TIMEOUT 30 RUN_SERIAL TRUE)
+endforeach()

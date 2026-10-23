@@ -12,6 +12,7 @@ void require(bool ok,const char* message) {++checks;if(!ok)throw std::runtime_er
 struct Motion {
     double omega=4;
     bool translating=true;
+    double radius=.26;
     int armor(double t) const {
         const double view=std::atan2(x(t),3.26);int best=0;double score=-2;
         for(int j=0;j<4;++j){double s=std::cos(omega*t+j*M_PI_2-view);if(s>score){score=s;best=j;}}
@@ -20,7 +21,7 @@ struct Motion {
     double x(double t)const{return translating?.15*std::sin(.2*t):0;}
     Eigen::Vector4d observation(double t)const {
         double a=mathutils::limit_rad(omega*t+armor(t)*M_PI_2);
-        return {3.26-.26*std::cos(a),x(t)-.26*std::sin(a),.1,a};
+        return {3.26-radius*std::cos(a),x(t)-radius*std::sin(a),.1,a};
     }
 };
 predict::Tracker::TP stamp(predict::Tracker::TP begin,double seconds) {
@@ -107,6 +108,7 @@ void pipeline_checks(const std::string& root) {
     hardware::TimedSerial serial({},std::move(fake),bridge,attitudes,statuses);
     plan::PlannerSubModule planner(config,bridge,root+"/asset/plannerParam/planner_param_hero.yml");
     predict::Tracker tracker;Motion motion{4,false};
+    if(target_model::config().fixed())motion.radius=target_model::config().radius_m;
     const auto start=predict::Tracker::TP::clock::now()-6100ms;
     auto data=std::make_shared<ThreadDataPack>();
     data->has_fixed_target=true;data->attitude_valid=true;data->robotstatus.robot_speed_mps=18.5;
@@ -149,7 +151,10 @@ void pipeline_checks(const std::string& root) {
 }
 int main(int argc,char** argv){try{
     Log console;screen=&console;
-    for(double omega:{1.,-1.,4.,-4.})rotating_checks(omega,.02);
-    rotating_checks(4,.1);negative_checks();pipeline_checks(argv[1]);
+    if(argc>2 && std::string(argv[2])=="--pipeline-only")pipeline_checks(argv[1]);
+    else {
+        for(double omega:{1.,-1.,4.,-4.})rotating_checks(omega,.02);
+        rotating_checks(4,.1);negative_checks();pipeline_checks(argv[1]);
+    }
     std::cout<<"PASS "<<checks<<" vehicle-model and end-to-end checks; no camera/UART opened\n";return 0;
 }catch(const std::exception& e){std::cerr<<"FAIL "<<e.what()<<"\n";return 1;}}

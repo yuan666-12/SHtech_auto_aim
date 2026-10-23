@@ -161,7 +161,8 @@ namespace predict {
         target.predictor_state = TrackingState::DETECTING;
 
         // 初始使用装甲板模型
-        target.updating_model_type = UpdatingModelType::ARMOR_MODEL;
+        target.updating_model_type = target_model_config.fixed() ? UpdatingModelType::VEHICLE_MODEL
+                                                                  : UpdatingModelType::ARMOR_MODEL;
 
         target.vehicle_model_rotation_count = 0;
         target.vehicle_model_trust = false;
@@ -271,7 +272,7 @@ namespace predict {
                 }
                 if (debug) std::cout << "[predict] ekf update" << std::endl;
                 radium_limit();
-                if (tag_id == 0) {
+                if (!target_model_config.fixed() && tag_id == 0) {
                     if (abs(target.tracked_state(7, 0)) > outpost_fix_yaw_speed_threshold) {
                         target.tracked_state(7, 0) =
                             target.tracked_state(7, 0) > 0 ? outpost_yaw_speed : -outpost_yaw_speed;
@@ -318,7 +319,7 @@ namespace predict {
             target.tracked_measurement(3, 0) = mathutils::limit_rad(target.tracked_measurement(3, 0));
         }
         target.tracked_state = whole_state_ekf.predict();
-        if (tag_id == 8) {
+        if (!target_model_config.fixed() && tag_id == 8) {
             if (abs(target.tracked_state(7, 0)) > outpost_fix_yaw_speed_threshold) {
                 target.tracked_state(7, 0) = target.tracked_state(7, 0) > 0 ? outpost_yaw_speed : -outpost_yaw_speed;
             }
@@ -436,11 +437,13 @@ namespace predict {
      */
     void Tracker::target_init() {
         target.predictor_state = TrackingState::IDLE;
-        target.updating_model_type = UpdatingModelType::ARMOR_MODEL;
+        target.updating_model_type = target_model_config.fixed() ? UpdatingModelType::VEHICLE_MODEL
+                                                                  : UpdatingModelType::ARMOR_MODEL;
         target.ab_counter = 0;
         target.vehicle_model_trust = false;
 
         target.tracked_state.setZero();
+        target_model_config.constrain_state(target.tracked_state);
         target.tracked_measurement.setZero();
         target.estimated_armor_m.setZero();
 
@@ -453,7 +456,7 @@ namespace predict {
         target.armor_z_state.setZero();
         target.armor_z_measurement.setZero();
 
-        target.another_r = 0.26;
+        target.another_r = target_model_config.initial_radius_m();
         target.dz = 0.0;
 
         target.tracked_armor = bbox_t{};
@@ -542,6 +545,7 @@ namespace predict {
             x_pri(4, 0) += x(5, 0) * dt;
             x_pri(6, 0) += x(7, 0) * dt;
             x_pri(6, 0) = mathutils::limit_rad(x_pri(6, 0));
+            target_model_config.constrain_state(x_pri);
             return x_pri;
         };
         auto cal_F_ = [this](const Eigen::Matrix<double, 11, 1> &x) {
@@ -550,29 +554,33 @@ namespace predict {
                 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, dt, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
                 0, 0, 0, 0, 1, dt, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0,
                 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1;
+            target_model_config.constrain_covariance(F);
             return F;
         };
-        auto h_ = [](const Eigen::Matrix<double, 11, 1> &x, const int id) {
+        auto h_ = [this](const Eigen::Matrix<double, 11, 1> &x, const int id) {
             Eigen::Matrix<double, 4, 1> z;
             auto angle = mathutils::limit_rad(x(6, 0) + id * M_PI_2);
             auto is_another_r = id == 1 || id == 3;
-            auto r = is_another_r ? x(8, 0) + x(9, 0) : x(8, 0);
+            auto r = target_model_config.fixed() ? target_model_config.radius_m
+                                                 : (is_another_r ? x(8, 0) + x(9, 0) : x(8, 0));
             z(0, 0) = x(0, 0) - r * cos(angle);
             z(1, 0) = x(2, 0) - r * sin(angle);
-            z(2, 0) = is_another_r ? x(4, 0) + x(10, 0) : x(4, 0);
+            z(2, 0) = is_another_r && !target_model_config.fixed() ? x(4, 0) + x(10, 0) : x(4, 0);
             z(3, 0) = angle;
             return z;
         };
-        auto cal_H_ = [](const Eigen::Matrix<double, 11, 1> &x, const int id) {
+        auto cal_H_ = [this](const Eigen::Matrix<double, 11, 1> &x, const int id) {
             auto angle = mathutils::limit_rad(x(6, 0) + id * M_PI_2);
             auto is_another_r = id == 1 || id == 3;
-            auto r = is_another_r ? x(8, 0) + x(9, 0) : x(8, 0);
+            auto r = target_model_config.fixed() ? target_model_config.radius_m
+                                                 : (is_another_r ? x(8, 0) + x(9, 0) : x(8, 0));
             auto dx_dl = is_another_r ? -cos(angle) : 0.0;
             auto dy_dl = is_another_r ? -sin(angle) : 0.0;
             auto dz_dh = is_another_r ? 1.0 : 0.0;
             Eigen::Matrix<double, 4, 11> H;
             H << 1, 0, 0, 0, 0, 0, r * sin(angle), 0, -cos(angle), dx_dl, 0, 0, 0, 1, 0, 0, 0, -r * cos(angle), 0,
                 -sin(angle), dy_dl, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, dz_dh, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0;
+            target_model_config.constrain_observation(H);
             return H;
         };
         auto update_Q_ = [this](const Eigen::Matrix<double, 11, 1> &x) {
@@ -584,6 +592,7 @@ namespace predict {
                 0, 0, 0, 0, 0, 0, 0, 0, q_x_vx, q_vx_vx, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, q_y_y, q_y_vy, 0, 0, 0, 0, 0,
                 0, 0, 0, 0, q_y_vy, q_vy_vy, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, p_r, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, p_r,
                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, p_r;
+            target_model_config.constrain_process_noise(Q);
             return Q;
         };
         auto update_R_ = [this](const Eigen::Vector4d &measurement) {
@@ -593,11 +602,13 @@ namespace predict {
         P0 = Eigen::Matrix<double, 11, 11>::Identity();
         Eigen::Matrix<double, 11, 1> X0;
         X0.setZero();
-        X0(8, 0) = 0.26;
-        auto x_add_ = [](const Eigen::Matrix<double, 11, 1> &x1, const Eigen::Matrix<double, 11, 1> &x2) {
+        X0(8, 0) = target_model_config.initial_radius_m();
+        target_model_config.constrain_covariance(P0);
+        auto x_add_ = [this](const Eigen::Matrix<double, 11, 1> &x1, const Eigen::Matrix<double, 11, 1> &x2) {
             Eigen::Matrix<double, 11, 1> res;
             res = x1 + x2;
             res(6, 0) = mathutils::limit_rad(res(6, 0));
+            target_model_config.constrain_state(res);
             return res;
         };
         auto x_minus_ = [](const Eigen::Matrix<double, 11, 1> &x1, const Eigen::Matrix<double, 11, 1> &x2) {
@@ -723,6 +734,10 @@ namespace predict {
      *          （该模型的Q参数对仅平移运动不敏感）
      */
     void Tracker::tracker_model_select() {
+        if (target_model_config.fixed()) {
+            target.updating_model_type = UpdatingModelType::VEHICLE_MODEL;
+            return;
+        }
         // 根据旋转速度更新模型
         if (target.updating_model_type == UpdatingModelType::ARMOR_MODEL) {
             if (abs(target.yaw_state(1, 0)) > armor_model_threshold) {
@@ -789,17 +804,19 @@ namespace predict {
      */
     void Tracker::reset_whole_state_ekf() {
         // 从装甲板位置和朝向推算车辆中心位置
-        double yc = target.tracked_measurement(0, 0) + 0.26 * cos(target.tracked_measurement(3, 0));
-        double xc = target.tracked_measurement(1, 0) + 0.26 * sin(target.tracked_measurement(3, 0));
+        const double radius = target_model_config.initial_radius_m();
+        double yc = target.tracked_measurement(0, 0) + radius * cos(target.tracked_measurement(3, 0));
+        double xc = target.tracked_measurement(1, 0) + radius * sin(target.tracked_measurement(3, 0));
 
         // 设置初始状态：[yc, 0, xc, 0, zc, 0, yaw, 0, 0.26, 0, 0]
         target.tracked_state << yc, 0, xc, 0, target.tracked_measurement(2, 0), 0, target.tracked_measurement(3, 0), 0,
-            0.26, 0, 0;
+            radius, 0, 0;
+        target_model_config.constrain_state(target.tracked_state);
 
         whole_state_ekf.reset(target.tracked_state);
 
         // 重置相关参数
-        target.another_r = 0.26;
+        target.another_r = target_model_config.initial_radius_m();
         target.dz = 0;
         target.ab_counter = 0;
         yaw_speed_diverge_counter = 0;
@@ -812,6 +829,11 @@ namespace predict {
      * @details 将估计的旋转半径限制在合理范围内
      */
     void Tracker::radium_limit() {
+        if (target_model_config.fixed()) {
+            target_model_config.constrain_state(target.tracked_state);
+            whole_state_ekf.set_state(target.tracked_state);
+            return;
+        }
         // 限制半径范围
         if (target.tracked_state(8, 0) < 0.12) {
             target.tracked_state(8, 0) = 0.12;
