@@ -12,12 +12,15 @@ find_package(Eigen3 REQUIRED)
 
 include_directories(${OpenCV_INCLUDE_DIRS})
 include_directories(${EIGEN3_INCLUDE_DIR})
+
+set(DETECT_COMMON_SOURCES preprocess_submodule.cpp corner_refine_submodule.cpp
+    detect_submodule.cpp armor_corner_optimizer.cpp)
 if(INFERENCE_BACKEND STREQUAL "TRT")
     find_package(CUDA REQUIRED)
     include_directories(${CUDA_INCLUDE_DIRS})
     aux_source_directory(TensorRT trt_src)
 
-    add_library(detect OBJECT preprocess_submodule.cpp corner_refine_submodule.cpp detect_submodule.cpp armor_corner_optimizer.cpp ${trt_src})
+    add_library(detect OBJECT ${DETECT_COMMON_SOURCES} ${trt_src})
 
     if(DEFINED ENV{TRT_PATH})
         FILE(GLOB TRT_LIBS "$ENV{TRT_PATH}/lib/libnv*.so")
@@ -41,7 +44,7 @@ elseif(INFERENCE_BACKEND STREQUAL "ONNX")
     endif()
     aux_source_directory(ONNX onnx_src)
 
-    add_library(detect OBJECT preprocess_submodule.cpp corner_refine_submodule.cpp detect_submodule.cpp armor_corner_optimizer.cpp ${onnx_src})
+    add_library(detect OBJECT ${DETECT_COMMON_SOURCES} ${onnx_src})
 
     target_include_directories(detect PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
     target_link_libraries(detect ${OpenCV_LIBS} "${ONNXRUNTIME_LIBRARY}")
@@ -51,7 +54,7 @@ elseif(INFERENCE_BACKEND STREQUAL "AXCL")
     include_directories(/soc/include)
     aux_source_directory(AXCL axcl_src)
 
-    add_library(detect OBJECT preprocess_submodule.cpp corner_refine_submodule.cpp detect_submodule.cpp armor_corner_optimizer.cpp ${axcl_src})
+    add_library(detect OBJECT ${DETECT_COMMON_SOURCES} ${axcl_src})
 
     target_link_libraries(detect ${OpenCV_LIBS} ax_interpreter ax_sys ax_ivps ax_engine)
     target_link_directories(detect PUBLIC /soc/lib)

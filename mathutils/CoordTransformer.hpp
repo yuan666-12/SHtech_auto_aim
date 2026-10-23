@@ -104,6 +104,7 @@ namespace mathutils {
         const std::vector<cv::Point3d> &small_armor_model(int color_id) const;
 
         void load_gimbal_geometry();
+        void finish_initialization(bool adjust_);
 
         /// @brief 相机到IMU的旋转矩阵 [3x3]
         Eigen::Matrix3d R_camera2imu;

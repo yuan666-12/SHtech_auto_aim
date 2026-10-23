@@ -45,6 +45,22 @@ namespace mathutils {
         cv::cv2eigen(offset, T_pivot2imu);
     }
 
+    void CoordTransformer::finish_initialization(bool adjust_) {
+        cv::cv2eigen(T_camera2imu_MAT, T_camera2imu);
+        cv::cv2eigen(R_camera2imu_MAT, R_camera2imu);
+        cv::cv2eigen(F_MAT, F);
+        cv::cv2eigen(C_MAT, C);
+
+        adjust = adjust_;
+
+        if (adjust) {
+            autoaim_gui::namedWindow("transformer trackbar", cv::WINDOW_AUTOSIZE);
+
+            autoaim_gui::createTrackbar("pw_length", "transformer trackbar", &pw_length, 250, 0);
+            autoaim_gui::createTrackbar("pw_width", "transformer trackbar", &pw_width, 250, 0);
+        }
+    }
+
     /**
      * @brief 默认构造函数 - 初始化所有变换矩阵为零矩阵
      */
@@ -63,19 +79,7 @@ namespace mathutils {
         C_MAT = cv::Mat::zeros(1, 5, CV_64FC1);
 
         // 将OpenCV矩阵转换为Eigen矩阵，便于后续数学运算
-        cv::cv2eigen(T_camera2imu_MAT, T_camera2imu);
-        cv::cv2eigen(R_camera2imu_MAT, R_camera2imu);
-        cv::cv2eigen(F_MAT, F);
-        cv::cv2eigen(C_MAT, C);
-
-        adjust = adjust_;
-
-        if (adjust) {
-            autoaim_gui::namedWindow("transformer trackbar", cv::WINDOW_AUTOSIZE);
-
-            autoaim_gui::createTrackbar("pw_length", "transformer trackbar", &pw_length, 250, 0);
-            autoaim_gui::createTrackbar("pw_width", "transformer trackbar", &pw_width, 250, 0);
-        }
+        finish_initialization(adjust_);
     }
 
     /**
@@ -98,19 +102,7 @@ namespace mathutils {
         fin["D"] >> C_MAT; // 相机畸变参数 (径向畸变、切向畸变)
 
         // 将OpenCV格式转换为Eigen格式，便于数学运算
-        cv::cv2eigen(T_camera2imu_MAT, T_camera2imu);
-        cv::cv2eigen(R_camera2imu_MAT, R_camera2imu);
-        cv::cv2eigen(F_MAT, F);
-        cv::cv2eigen(C_MAT, C);
-
-        adjust = adjust_;
-
-        if (adjust) {
-            autoaim_gui::namedWindow("transformer trackbar", cv::WINDOW_AUTOSIZE);
-
-            autoaim_gui::createTrackbar("pw_length", "transformer trackbar", &pw_length, 250, 0);
-            autoaim_gui::createTrackbar("pw_width", "transformer trackbar", &pw_width, 250, 0);
-        }
+        finish_initialization(adjust_);
     }
 
     /**

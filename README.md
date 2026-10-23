@@ -33,6 +33,8 @@ python3 tools/run_offline_checks.py --case refactor
 
 测试从当前源码编译，使用合成观测、内存串口和相机 SDK 替身，不打开真实设备。测试二进制位于 `build_checks/`，最新摘要位于 `log/checks/latest/`。
 
+当前总回归有四个待维护的历史用例：`dropout`、`tracking`、`vehicle_model` 仍包含旧的时间超时预期，`algorithm` 的投影输入仍使用旧装甲板尺寸。它们与当前30帧丢失策略及实测尺寸配置不一致，不能把该套件视为全部通过。2026-10-23 结构重构前后均为10项通过、上述4项失败；专项检查和既有数据回放另行验证。
+
 ## 目录
 
 | 目录 | 内容 |

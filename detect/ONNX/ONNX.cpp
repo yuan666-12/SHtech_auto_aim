@@ -1,11 +1,11 @@
 #include "ONNX.hpp"
+#include "thread_config.hpp"
 #include <opencv2/dnn/dnn.hpp>
 #include <opencv2/imgproc.hpp>
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
-#include <charconv>
 #include <stdexcept>
 #include <cstring>
 
@@ -21,14 +21,8 @@ static constexpr int MAX_DET = 128;
 
 namespace {
 int configured_threads() {
-    const char *value = std::getenv("AUTOAIM_ONNX_THREADS");
-    if (!value) return 4;
-    int threads = 0;
-    const auto end = value + std::strlen(value);
-    const auto parsed = std::from_chars(value, end, threads);
-    if (parsed.ec != std::errc{} || parsed.ptr != end || threads < 0 || threads > 64)
-        throw std::invalid_argument("AUTOAIM_ONNX_THREADS must be an integer in [0,64]");
-    return threads;
+    return autoaim_runtime::parse_thread_count(std::getenv("AUTOAIM_ONNX_THREADS"), 4, 0, 64,
+                                              "AUTOAIM_ONNX_THREADS");
 }
 }
 

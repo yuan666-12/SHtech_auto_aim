@@ -11,6 +11,7 @@
 #include <string>
 #include <stdexcept>
 #include <vector>
+#include <unordered_map>
 #include <unistd.h>
 
 // Opt-in, full-TX-rate diagnostics. Never supplies values to the control path.
@@ -72,18 +73,28 @@ inline std::vector<std::string> split(const std::string &line) {
     while(std::getline(in,value,','))result.push_back(value);
     return result;
 }
+inline const std::unordered_map<std::string, size_t> &column_indexes() {
+    static const auto indexes = [] {
+        const auto names = split(columns);
+        std::unordered_map<std::string, size_t> result;
+        result.reserve(names.size());
+        for (size_t i = 0; i < names.size(); ++i) result.emplace(names[i], i);
+        return result;
+    }();
+    return indexes;
+}
 // Shared decoder: replay uses precisely the recorded doubles and monotonic times.
 class Row {
     std::vector<std::string> values_;
 public:
     explicit Row(const std::string &line):values_(split(line)) {
-        if(values_.size()!=split(columns).size())throw std::runtime_error("incomplete hit diagnostic row");
+        if(values_.size()!=column_indexes().size())throw std::runtime_error("incomplete hit diagnostic row");
     }
     const std::string &get(const std::string &name) const {
-        static const auto keys=split(columns);
-        const auto it=std::find(keys.begin(),keys.end(),name);
-        if(it==keys.end())throw std::runtime_error("unknown hit diagnostic column: "+name);
-        return values_[static_cast<size_t>(it-keys.begin())];
+        const auto &indexes=column_indexes();
+        const auto it=indexes.find(name);
+        if(it==indexes.end())throw std::runtime_error("unknown hit diagnostic column: "+name);
+        return values_[it->second];
     }
     double number(const std::string &name) const { return std::stod(get(name)); }
     long long integer(const std::string &name) const { return std::stoll(get(name)); }

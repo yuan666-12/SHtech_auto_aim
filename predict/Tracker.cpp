@@ -258,10 +258,7 @@ namespace predict {
                                         TrackerDiagnostic &diagnostic) {
         if (same_id_armor_count) {
             if (target.updating_model_type != UpdatingModelType::ARMOR_MODEL) {
-                if (same_id_armor_count == 1) {
-                    int id = match_armor_id(target.tracked_measurement);
-                    target.tracked_state = whole_state_ekf.update(target.tracked_measurement, id);
-                } else if (same_id_armor_count == 2) {
+                if (same_id_armor_count == 1 || same_id_armor_count == 2) {
                     int id = match_armor_id(target.tracked_measurement);
                     target.tracked_state = whole_state_ekf.update(target.tracked_measurement, id);
                 }

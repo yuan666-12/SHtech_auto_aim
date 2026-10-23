@@ -5,6 +5,14 @@
 #include <limits>
 
 namespace {
+std::string configuration_key(const hit_diagnostics::Row &row) {
+    static constexpr const char *keys[] = {
+        "width", "height", "margin_x", "margin_z", "rearm_ms", "center_config_valid",
+        "yaw_tol", "pitch_tol", "ref_distance", "settle_ms", "rx_max_age_ms", "fire_config_valid"};
+    std::string result;
+    for (const auto *key : keys) result += row.get(key) + ',';
+    return result;
+}
 bool same(double a,double b) {
     return (std::isnan(a)&&std::isnan(b)) || a==b ||
         (std::isfinite(a)&&std::isfinite(b)&&std::abs(a-b)<=1e-10*std::max({1.,std::abs(a),std::abs(b)}));
@@ -70,8 +78,7 @@ int main(int argc,char **argv) {
             if(line.empty() || line[0]=='#')continue;
             if(line==hit_diagnostics::columns) {gate.reset();configuration.clear();last_sequence=0;++s.sessions;continue;}
             hit_diagnostics::Row r(line);const auto in=r.input();
-            const auto keys=hit_diagnostics::split(hit_diagnostics::columns);
-            std::string config;for(const auto &key:keys)if(key=="width" || key=="height" || key=="margin_x" || key=="margin_z" || key=="rearm_ms" || key=="center_config_valid" || key=="yaw_tol" || key=="pitch_tol" || key=="ref_distance" || key=="settle_ms" || key=="rx_max_age_ms" || key=="fire_config_valid")config+=r.get(key)+',';
+            const auto config=configuration_key(r);
             if(!gate) {gate=std::make_unique<fire_control::Gate>(r.fire_config(),r.center_config());configuration=config;}
             if(config!=configuration)throw std::runtime_error("configuration changed inside one recorded session");
             const auto sequence=std::stoull(r.get("sequence"));if(sequence!=last_sequence+1)++s.sequence_gaps;last_sequence=sequence;
