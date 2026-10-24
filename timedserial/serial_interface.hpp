@@ -28,6 +28,7 @@ class SerialInterface
 public:
     virtual ~SerialInterface() = default;
     virtual bool fire_actuation_enabled() const { return false; }
+    virtual bool aim_link_enabled() const { return true; }
     // Called immediately before transmit_cmd by the same TX thread.
     virtual void set_fire_diagnostics(const fire_control::Diagnostics&) {}
 

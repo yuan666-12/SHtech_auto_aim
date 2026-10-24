@@ -1,6 +1,7 @@
 #pragma once
 
 #include "center_fire_control.hpp"
+#include "first_shot_gate.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -56,7 +57,7 @@ struct Config {
 
 enum class Reason {
     InvalidConfig, InvalidTarget, InvalidRx, PitchLimited, Slewing,
-    Misaligned, Settling, NoRequest, SingleConsumed, CenterWindowClosed, Ready
+    Misaligned, Settling, NoRequest, SingleConsumed, CenterWindowClosed, FirstShotUnstable, Ready
 };
 inline const char* name(Reason reason) {
     switch (reason) {
@@ -70,6 +71,7 @@ inline const char* name(Reason reason) {
         case Reason::NoRequest: return "no_request";
         case Reason::SingleConsumed: return "single_consumed";
         case Reason::CenterWindowClosed: return "center_window_closed";
+        case Reason::FirstShotUnstable: return "first_shot_unstable";
         case Reason::Ready: return "ready";
     }
     return "unknown";
@@ -81,6 +83,7 @@ struct Input {
     double rx_yaw = 0, rx_pitch = 0, distance = 0;
     int requested = 0, target_id = 0, aim_mode = 0;
     bool eligible = false;
+    bool first_shot_ready = true; // Legacy standalone/replay inputs predate the RX preparation gate.
     uint64_t single_shot_id = 0;
     center_fire::Snapshot center_window;
 };
@@ -107,6 +110,7 @@ struct Diagnostics {
     Input input;
     Config fire_config;
     center_fire::Config center_config;
+    first_shot::Result first_shot;
 };
 
 class Gate {
@@ -163,6 +167,11 @@ public:
                 return fail(Reason::PitchLimited);
             if (!center_window_.config().valid) return fail(Reason::InvalidConfig);
             if (in.requested != 2) { out.reason=Reason::NoRequest; return out; }
+            if (!in.first_shot_ready) {
+                center_window_.reset_entry();
+                out.reason=Reason::FirstShotUnstable;
+                return out;
+            }
             if (center_window_.evaluate(in.center_window,in.now,in.rx_yaw,in.rx_pitch,in.target_id,
                                         &out.window)) {
                 out.advice=2;out.reason=Reason::Ready;

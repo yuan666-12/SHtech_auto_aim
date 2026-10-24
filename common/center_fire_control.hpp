@@ -145,6 +145,7 @@ class Window {
 public:
     explicit Window(Config c=Config::from_environment()):config_(c) {}
     const Config& config() const { return config_; }
+    void reset_entry() { latched_=false;outside_since_={};target_id_=0; } // Keep shot cooldown across rearming.
     bool evaluate(const Snapshot& s,Clock::time_point now,double yaw,double pitch,int id,
                   Evaluation* diagnostic=nullptr) {
         if(diagnostic) *diagnostic={};

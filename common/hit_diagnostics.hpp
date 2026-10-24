@@ -31,7 +31,7 @@ struct Transport {
     bool link_enabled=false,dry_run=false,track_only=false;
     const char *status="not_written";
 };
-inline constexpr const char *columns=
+inline constexpr const char *legacy_columns=
     "sequence,wall_ns,now_ns,rx_ns,state_ns,planned_yaw,planned_pitch,desired_yaw,desired_pitch,"
     "slew_yaw,slew_pitch,wire_yaw_mcu,wire_pitch,rx_yaw,rx_pitch,distance,requested_raw,requested_gate,"
     "target_id,aim_mode,eligible,trusted,rotation_count,tracker_model,single_shot_id,shot_hold,"
@@ -41,6 +41,18 @@ inline constexpr const char *columns=
     "yaw_tol,pitch_tol,ref_distance,settle_ms,rx_max_age_ms,fire_config_valid,"
     "hit_inside,hit_crossed,hit_front,hit_armor,flight_s,lateral_m,vertical_m,half_width,half_height,"
     "observation_fresh,observation_remaining_ms";
+inline constexpr const char *columns=
+    "sequence,wall_ns,now_ns,rx_ns,state_ns,planned_yaw,planned_pitch,desired_yaw,desired_pitch,"
+    "slew_yaw,slew_pitch,wire_yaw_mcu,wire_pitch,rx_yaw,rx_pitch,distance,requested_raw,requested_gate,"
+    "target_id,aim_mode,eligible,trusted,rotation_count,tracker_model,single_shot_id,shot_hold,"
+    "link_enabled,dry_run,track_only,written,fire_byte,transport_status,advice,gate_reason,window_reason,"
+    "snapshot_valid,bullet_speed,release_delay,shot_interval,yaw_comp,pitch_comp,air_resistance,"
+    "s0,s1,s2,s3,s4,s5,s6,s7,s8,s9,s10,width,height,margin_x,margin_z,rearm_ms,center_config_valid,"
+    "yaw_tol,pitch_tol,ref_distance,settle_ms,rx_max_age_ms,fire_config_valid,"
+    "hit_inside,hit_crossed,hit_front,hit_armor,flight_s,lateral_m,vertical_m,half_width,half_height,"
+    "observation_fresh,observation_remaining_ms"
+    ",first_shot_ready,first_shot_state,first_shot_span_ms,first_shot_yaw_rate_dps,first_shot_pitch_rate_dps,"
+    "first_shot_yaw_span_deg,first_shot_pitch_span_deg,first_shot_dispatched";
 
 inline std::string encode(const fire_control::Diagnostics &d,const Transport &tx,unsigned long long seq) {
     const auto &in=d.input;const auto &s=in.center_window;
@@ -67,6 +79,9 @@ inline std::string encode(const fire_control::Diagnostics &d,const Transport &tx
     field(hit.flight_s);field(hit.lateral_m);field(hit.vertical_m);
     field(d.decision.window.half_width_m);field(d.decision.window.half_height_m);
     field(d.observation_fresh);field(d.observation_remaining_ms);
+    field(in.first_shot_ready);field(d.first_shot.state);field(d.first_shot.span_ms);
+    field(d.first_shot.yaw_rate_dps);field(d.first_shot.pitch_rate_dps);
+    field(d.first_shot.yaw_span_deg);field(d.first_shot.pitch_span_deg);field(d.first_shot.dispatched);
     return out.str();
 }
 
@@ -90,12 +105,13 @@ class Row {
     std::vector<std::string> values_;
 public:
     explicit Row(const std::string &line):values_(split(line)) {
-        if(values_.size()!=column_indexes().size())throw std::runtime_error("incomplete hit diagnostic row");
+        if(values_.size()!=column_indexes().size() && values_.size()!=split(legacy_columns).size())throw std::runtime_error("incomplete hit diagnostic row");
     }
     const std::string &get(const std::string &name) const {
         const auto &indexes=column_indexes();
         const auto it=indexes.find(name);
         if(it==indexes.end())throw std::runtime_error("unknown hit diagnostic column: "+name);
+        if(it->second>=values_.size())throw std::runtime_error("column absent from legacy diagnostic row");
         return values_[it->second];
     }
     double number(const std::string &name) const { return std::stod(get(name)); }
@@ -109,6 +125,7 @@ public:
         in.requested=integer("requested_gate");in.target_id=integer("target_id");
         in.aim_mode=integer("aim_mode");in.eligible=integer("eligible");
         in.single_shot_id=std::stoull(get("single_shot_id"));
+        if(values_.size()==column_indexes().size())in.first_shot_ready=integer("first_shot_ready");
         auto &s=in.center_window;s.state_time=time(integer("state_ns"));s.valid=integer("snapshot_valid");
         s.bullet_speed=number("bullet_speed");s.release_delay_s=number("release_delay");
         s.shot_interval_s=number("shot_interval");s.yaw_comp_rad=number("yaw_comp");
@@ -227,13 +244,17 @@ public:
         if(!geometry_file_)std::cerr<<"[HIT_DIAG] cannot open geometry file: "<<geometry_path<<'\n';
         std::error_code error;const auto exe=std::filesystem::read_symlink("/proc/self/exe",error);
         const char *config=std::getenv("AUTOAIM_CONFIG");
+        const auto first_config=first_shot::Config::from_environment();
         std::ostringstream header;
-        header<<"# schema=hero-hit-v1 pid="<<getpid()<<" project="<<std::quoted(project)
+        header<<"# schema=hero-hit-v2 pid="<<getpid()<<" project="<<std::quoted(project)
               <<" executable="<<std::quoted(exe.string())<<" build="
               <<std::quoted(std::string(__DATE__)+" "+__TIME__)
               <<" target_model="<<target_model::config().name()
               <<" radius_m="<<target_model::config().initial_radius_m()
               <<" stationary_center="<<target_model::config().fixed()
+              <<" first_shot_ms="<<first_config.stable_ms<<" first_shot_rate_dps="<<first_config.max_rate_dps
+              <<" first_shot_yaw_span="<<first_config.yaw_span_deg<<" first_shot_pitch_span="<<first_config.pitch_span_deg
+              <<" first_shot_reposition="<<first_config.reposition_deg
               <<" config="<<std::quoted(config?config:"")<<'\n'<<columns<<'\n';
         const std::string detail_header=std::string(
             "# schema=hero-hit-geometry-v1 units=m,rad,s coords=world_xyz origin=gimbal_axis_intersection "

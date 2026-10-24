@@ -288,7 +288,14 @@ void serial_checks(bool actuate = true) {
     msg.center_window = fixture(center_fire::Clock::now());
     msg.observation_deadline = center_fire::Clock::now() + 200ms;
     planner.send(msg);
-    require(driver->wait_single(1), "production TX opens window without ideal-angle arrival");
+    // Preparation requires actual new RX samples; a single static old sample is insufficient.
+    for (int i = 0; i < 25; ++i) {
+        driver->attitude(Attitude(0, 10, 0));
+        msg.observation_deadline = center_fire::Clock::now() + 200ms;
+        planner.send(msg);
+        std::this_thread::sleep_for(5ms);
+    }
+    require(driver->wait_single(1), "production TX opens window after fresh RX stability without ideal-angle arrival");
     for (int i = 0; i < 54; ++i) {
         driver->attitude(Attitude(0, 10, 0));
         if (i % 5 == 0) {

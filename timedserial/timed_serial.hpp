@@ -127,6 +127,8 @@ namespace hardware {
         AimedTargetType fire_aim_mode_cache_ = AimedTargetType::NONE;
         uint64_t single_shot_id_ = 0, single_shot_id_cache_ = 0;
         fire_control::Gate fire_gate_;
+        first_shot::Gate first_shot_gate_;
+        first_shot::Result first_shot_status_;
         center_fire::Snapshot center_window_, center_window_cache_;
         bool model_trusted_ = false, model_trusted_cache_ = false;
         int model_rotation_count_ = 0, model_rotation_count_cache_ = 0;

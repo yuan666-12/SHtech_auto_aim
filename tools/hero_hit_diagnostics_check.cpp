@@ -31,6 +31,7 @@ void scenario(hit_diagnostics::Writer &writer,int index) {
         in.center_window.state_time=in.now;in.rx_yaw=i%20<10?0:5;
         in.requested=(i%17==0)?0:2;
         in.eligible=i%19!=0;
+        in.first_shot_ready=i%23!=0;
         if(index==1)in.center_window.state[7]=1.2345678901234567;
         if(index==2)in.center_window.state[7]=-1.2345678901234567;
         if(i==20)in.rx_time-=51ms;

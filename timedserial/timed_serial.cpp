@@ -23,6 +23,11 @@ namespace hardware {
             fire.yaw_tolerance_deg, fire.pitch_tolerance_deg, fire.reference_distance_m, fire.settle_ms,
             fire.rx_max_age_ms, fire.valid);
 
+        const auto &first = first_shot_gate_.config();
+        LOGM_S("[FirstShot] stable_ms=%.1f rate_dps=%.2f yaw_span=%.3f pitch_span=%.3f reposition=%.2f valid=%d",
+               first.stable_ms, first.max_rate_dps, first.yaw_span_deg, first.pitch_span_deg,
+               first.reposition_deg, first.valid);
+
         // 注册为 Planner 消息接收者
         planner_bridge_.set_receiver(
             [this](const pipeline::bridge::PlannerToSerialMessage &msg) { this->handle_planner_message(msg); });
@@ -294,6 +299,7 @@ namespace hardware {
         diagnostic.planned_pitch = planned_pitch;
         diagnostic.fire_config = fire_gate_.config();
         diagnostic.center_config = fire_gate_.center_config();
+        diagnostic.first_shot = first_shot_status_;
         diagnostic.requested = command_cache_.fire_enable;
         diagnostic.gate_requested = fire_input.requested;
         diagnostic.aim_mode = fire_input.aim_mode;
@@ -350,10 +356,18 @@ namespace hardware {
         auto fire_input =
             make_fire_input(target_valid, desired_yaw, desired_pitch, yaw_target, pitch_target, holding_shot);
         const auto decision_started = fire_control::Clock::now();
+        const first_shot::Input preparation{
+            fire_input.now, fire_input.rx_time,
+            driver_->aim_link_enabled() && target_valid && model_trusted_cache_ && fire_input.aim_mode == 4,
+            fire_input.target_id, fire_input.rx_yaw, fire_input.rx_pitch,
+            planned_yaw, planned_pitch, fire_gate_.config().rx_max_age_ms};
+        first_shot_status_ = first_shot_gate_.update(preparation);
+        fire_input.first_shot_ready = first_shot_status_.ready;
         const auto fire_decision = fire_gate_.evaluate(fire_input);
         const auto decision_finished = fire_control::Clock::now();
         if (fire_decision.advice == 2 && driver_->fire_actuation_enabled() &&
             fire_aim_mode_cache_ == AimedTargetType::VEHICLE_CENTER_WITH_VEHICLE_MODEL) {
+            first_shot_gate_.note_dispatched(preparation);
             shot_hold_yaw_ = fire_input.rx_yaw;
             shot_hold_pitch_ = fire_input.rx_pitch;
             shot_hold_until_ =

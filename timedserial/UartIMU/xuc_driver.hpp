@@ -68,6 +68,7 @@ class XucDriver : public SerialInterface {
     void start() override;
     void close() override;
     bool fire_actuation_enabled() const override;
+    bool aim_link_enabled() const override { return fire_mode_enabled_.load(); }
     void set_fire_diagnostics(const fire_control::Diagnostics &diagnostic) override { fire_diagnostics_ = diagnostic; }
 
     void set_attitude_callback(AttitudeCallback cb) override;

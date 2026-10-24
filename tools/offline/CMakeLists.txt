@@ -96,3 +96,12 @@ foreach(profile free province_fixed)
         ENVIRONMENT "AUTOAIM_HEADLESS=1;AUTOAIM_XUC_DRY_RUN=1;AUTOAIM_TARGET_MODEL=${profile};AUTOAIM_TARGET_RADIUS_M=0.265"
         TIMEOUT 30 RUN_SERIAL TRUE)
 endforeach()
+
+add_executable(hero_first_shot_check "${HERO_ROOT}/tools/hero_first_shot_check.cpp")
+target_link_libraries(hero_first_shot_check PRIVATE hero_check_core)
+add_test(NAME first_shot COMMAND hero_first_shot_check)
+add_test(NAME first_shot_trace COMMAND hero_first_shot_check "${HERO_ROOT}/tools/fixtures/first_shot_motion_20261024.csv")
+add_test(NAME first_shot_tx COMMAND hero_first_shot_check --tx)
+set_tests_properties(first_shot first_shot_trace first_shot_tx PROPERTIES
+    ENVIRONMENT "AUTOAIM_HEADLESS=1;AUTOAIM_XUC_DRY_RUN=1"
+    TIMEOUT 30 RUN_SERIAL TRUE)

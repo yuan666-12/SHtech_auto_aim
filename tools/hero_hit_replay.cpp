@@ -76,7 +76,7 @@ int main(int argc,char **argv) {
         while(std::getline(input,line)) {
             if(!line.empty()&&line.back()=='\r')line.pop_back();
             if(line.empty() || line[0]=='#')continue;
-            if(line==hit_diagnostics::columns) {gate.reset();configuration.clear();last_sequence=0;++s.sessions;continue;}
+            if(line==hit_diagnostics::columns || line==hit_diagnostics::legacy_columns) {gate.reset();configuration.clear();last_sequence=0;++s.sessions;continue;}
             hit_diagnostics::Row r(line);const auto in=r.input();
             const auto config=configuration_key(r);
             if(!gate) {gate=std::make_unique<fire_control::Gate>(r.fire_config(),r.center_config());configuration=config;}
