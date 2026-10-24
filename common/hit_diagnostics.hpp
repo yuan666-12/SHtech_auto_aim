@@ -1,6 +1,7 @@
 #pragma once
 #include "fire_control.hpp"
 #include "target_model.hpp"
+#include "rotation_speed_prior.hpp"
 #include "diagnostic_session.hpp"
 #include <array>
 #include <cstdlib>
@@ -245,6 +246,7 @@ public:
         std::error_code error;const auto exe=std::filesystem::read_symlink("/proc/self/exe",error);
         const char *config=std::getenv("AUTOAIM_CONFIG");
         const auto first_config=first_shot::Config::from_environment();
+        const auto rotation_config=rotation_speed::Config::from_environment(target_model::config().fixed());
         std::ostringstream header;
         header<<"# schema=hero-hit-v2 pid="<<getpid()<<" project="<<std::quoted(project)
               <<" executable="<<std::quoted(exe.string())<<" build="
@@ -255,6 +257,9 @@ public:
               <<" first_shot_ms="<<first_config.stable_ms<<" first_shot_rate_dps="<<first_config.max_rate_dps
               <<" first_shot_yaw_span="<<first_config.yaw_span_deg<<" first_shot_pitch_span="<<first_config.pitch_span_deg
               <<" first_shot_reposition="<<first_config.reposition_deg
+              <<" omega_prior="<<rotation_config.enabled<<" target_period_s="<<rotation_config.period_s
+              <<" omega_prior_std_rad_s="<<rotation_config.sigma_rad_s<<" omega_drift_std="<<rotation_config.drift_std
+              <<" omega_direction_confirm_ms="<<rotation_config.confirm_ms
               <<" config="<<std::quoted(config?config:"")<<'\n'<<columns<<'\n';
         const std::string detail_header=std::string(
             "# schema=hero-hit-geometry-v1 units=m,rad,s coords=world_xyz origin=gimbal_axis_intersection "

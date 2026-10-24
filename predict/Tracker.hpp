@@ -17,6 +17,7 @@
 // modules
 #include "common.hpp"
 #include "target_model.hpp"
+#include "rotation_speed_prior.hpp"
 #include "Kalman.hpp"
 #include "tracking_policy.hpp"
 #include "math_tools.hpp"
@@ -99,6 +100,7 @@ namespace predict {
 
       private:
         const target_model::Config target_model_config = target_model::config();
+        rotation_speed::Prior rotation_prior_{rotation_speed::Config::from_environment(target_model_config.fixed())};
 
         // === 配置参数 ===
         /// @brief 调试模式标志
@@ -267,6 +269,7 @@ namespace predict {
          * @details 设置EKF的状态转移函数、观测函数和雅可比矩阵
          */
         void whole_state_ekf_init();
+        void apply_rotation_speed_prior();
 
         /**
          * @brief 初始化参数调整界面

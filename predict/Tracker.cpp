@@ -21,6 +21,7 @@ namespace predict {
     struct TrackerDiagnostic {
         const void *tracker;
         const Target &target;
+        const rotation_speed::Prior *rotation_prior;
         DiagnosticTP image_time;
         std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
         Eigen::Vector4d input = Eigen::Vector4d::Zero();
@@ -33,8 +34,8 @@ namespace predict {
         const char *reset_reason = "none";
         bool armor_switched = false;
         TrackerDiagnostic(const void *owner, const Target &t, const Eigen::Vector4d &z, DiagnosticTP tp,
-                          DiagnosticTP previous_tp, int count, const char *operation)
-            : tracker(owner), target(t), image_time(tp), input_count(count),
+                          DiagnosticTP previous_tp, int count, const char *operation, const rotation_speed::Prior *prior)
+            : tracker(owner), target(t), rotation_prior(prior), image_time(tp), input_count(count),
               state_before(static_cast<int>(t.predictor_state)), count_before(t.vehicle_model_rotation_count),
               trust_before(t.vehicle_model_trust), model_before(static_cast<int>(t.updating_model_type)),
               observation_gap_ms(tracking_policy::observation_age(t.last_observation_time, tp) * 1000.0),
@@ -89,6 +90,18 @@ namespace predict {
                 int(target.observation_updated), int(target.measurement_rejected), int(target.filter_reset),
                 s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7], s[8], s[9], s[10],
                 m[0], m[1], m[2], m[3]);
+            if (rotation_prior) {
+                const auto &prior = *rotation_prior;
+                const auto &cfg = prior.config();
+                std::fprintf(logfile->out,
+                    "[DIAG_OMEGA] image_ns=%lld tracker=%p enabled=%d active=%d direction=%d candidate=%d "
+                    "confirm_ms=%.3f state=%s nominal_rad_s=%.9f target_rad_s=%.9f "
+                    "sigma_rad_s=%.6f drift_std=%.6f estimated_rad_s=%.9f\n",
+                    static_cast<long long>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        image_time.time_since_epoch()).count()), tracker, int(cfg.enabled), int(prior.active()),
+                    prior.direction(), prior.candidate(), prior.confirmed_ms(), prior.state(),
+                    cfg.magnitude(), prior.target(), cfg.sigma_rad_s, cfg.drift_std, s[7]);
+            }
 
         }
     };
@@ -134,7 +147,7 @@ namespace predict {
      * @details 重置所有滤波器状态，进入检测阶段
      */
     const Target &Tracker::reset_target(const Eigen::Matrix<double, 4, 1> &measurement, TP &tp) {
-        TrackerDiagnostic diagnostic(this, target, measurement, tp, last_tp, 1, "reset_target");
+        TrackerDiagnostic diagnostic(this, target, measurement, tp, last_tp, 1, "reset_target", &rotation_prior_);
         diagnostic.reset_reason = "explicit_reset_target";
         last_tp = tp;
         target.last_observation_time = tp;
@@ -293,7 +306,7 @@ namespace predict {
     const Target &Tracker::track(const Eigen::Matrix<double, 4, 1> &measurement,
                                  const Eigen::Matrix<double, 4, 1> &secondary_measurement, int same_id_armor_count,
                                  const int tag_id, const TP &tp, const double attitude_yaw) {
-        TrackerDiagnostic diagnostic(this, target, measurement, tp, last_tp, same_id_armor_count, "track");
+        TrackerDiagnostic diagnostic(this, target, measurement, tp, last_tp, same_id_armor_count, "track", &rotation_prior_);
         process_observation(measurement, tp, same_id_armor_count, diagnostic);
         dt = duration_cast<microseconds>(tp - last_tp).count() / 1e6;
         if (!std::isfinite(dt) || dt <= 0.0 || dt > 1.0) {
@@ -303,6 +316,7 @@ namespace predict {
                 target.predictor_state = TrackingState::IDLE;
                 target.vehicle_model_trust = false;
                 target.vehicle_model_rotation_count = 0;
+                rotation_prior_.reset();
                 return target;
             }
             TP reset_time = tp;
@@ -355,6 +369,9 @@ namespace predict {
             }
             return target;
         }
+        if (rotation_prior_.observe(target.tracked_state(7), same_id_armor_count > 0,
+                                    target.vehicle_model_trust, dt))
+            apply_rotation_speed_prior();
         last_tp = tp;
         return target;
     }
@@ -593,6 +610,10 @@ namespace predict {
                 0, 0, 0, 0, q_y_vy, q_vy_vy, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, p_r, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, p_r,
                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, p_r;
             target_model_config.constrain_process_noise(Q);
+            if (rotation_prior_.active()) {
+                const auto noise = rotation_prior_.noise(dt);
+                Q(6, 6) = noise.phase; Q(6, 7) = Q(7, 6) = noise.cross; Q(7, 7) = noise.speed;
+            }
             return Q;
         };
         auto update_R_ = [this](const Eigen::Vector4d &measurement) {
@@ -803,6 +824,7 @@ namespace predict {
      * @details 从当前观测值推断车辆中心位置并重新初始化EKF
      */
     void Tracker::reset_whole_state_ekf() {
+        rotation_prior_.reset();
         // 从装甲板位置和朝向推算车辆中心位置
         const double radius = target_model_config.initial_radius_m();
         double yc = target.tracked_measurement(0, 0) + radius * cos(target.tracked_measurement(3, 0));
@@ -828,6 +850,25 @@ namespace predict {
      * @brief 限制旋转半径在合理范围内
      * @details 将估计的旋转半径限制在合理范围内
      */
+    void Tracker::apply_rotation_speed_prior() {
+        using Matrix = Eigen::Matrix<double, 11, 11>;
+        const Matrix covariance = whole_state_ekf.get_P();
+        const double variance = std::pow(rotation_prior_.config().sigma_rad_s, 2);
+        const double denominator = covariance(7, 7) + variance;
+        if (!covariance.allFinite() || !std::isfinite(denominator) || denominator <= 0) {
+            rotation_prior_.reset();
+            return;
+        }
+        const Eigen::Matrix<double, 11, 1> gain = covariance.col(7) / denominator;
+        target.tracked_state += gain * (rotation_prior_.target() - target.tracked_state(7));
+        target.tracked_state(6) = mathutils::limit_rad(target.tracked_state(6));
+        Matrix correction = Matrix::Identity();
+        correction.col(7) -= gain;
+        const Matrix posterior = correction * covariance * correction.transpose() + variance * gain * gain.transpose();
+        whole_state_ekf.set_estimate(target.tracked_state, posterior);
+        radium_limit();
+    }
+
     void Tracker::radium_limit() {
         if (target_model_config.fixed()) {
             target_model_config.constrain_state(target.tracked_state);

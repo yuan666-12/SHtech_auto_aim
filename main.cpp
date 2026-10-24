@@ -1,5 +1,6 @@
 #include "runtime_threads.hpp"
 #include "target_model.hpp"
+#include "rotation_speed_prior.hpp"
 // Resource order: allocate, bind callbacks, start workers, join, release.
 #include <cstdlib>
 #include <algorithm>
@@ -206,6 +207,10 @@ bool init() {
         const auto &target_config = target_model::config();
         LOGM_S("[TargetModel] mode=%s radius_m=%.6f stationary_center=%d equal_height=%d",
                target_config.name(), target_config.initial_radius_m(), target_config.fixed(), target_config.fixed());
+        const auto rotation_config = rotation_speed::Config::from_environment(target_config.fixed());
+        LOGM_S("[RotationSpeed] enabled=%d nominal_rad_s=%.6f confirm_ms=%.1f prior_std=%.3f drift_std=%.3f",
+               rotation_config.enabled, rotation_config.magnitude(), rotation_config.confirm_ms,
+               rotation_config.sigma_rad_s, rotation_config.drift_std);
         const auto thread_config = autoaim_runtime::configure_opencv_threads();
         LOGM_S("[Threads] OpenCV requested=%d effective=%d", thread_config.requested, thread_config.effective);
         const char *config = std::getenv("AUTOAIM_CONFIG");

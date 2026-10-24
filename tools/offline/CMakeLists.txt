@@ -79,12 +79,12 @@ target_link_libraries(hero_fixed_target_check PRIVATE hero_check_core)
 foreach(profile free province_fixed)
     add_test(NAME target_model_${profile} COMMAND hero_fixed_target_check)
     set_tests_properties(target_model_${profile} PROPERTIES
-        ENVIRONMENT "AUTOAIM_HEADLESS=1;AUTOAIM_TARGET_MODEL=${profile};AUTOAIM_TARGET_RADIUS_M=0.265"
+        ENVIRONMENT "AUTOAIM_HEADLESS=1;AUTOAIM_TARGET_MODEL=${profile};AUTOAIM_TARGET_RADIUS_M=0.265;AUTOAIM_OMEGA_PRIOR=0"
         TIMEOUT 30 RUN_SERIAL TRUE)
 endforeach()
 add_test(NAME target_model_radius_override COMMAND hero_fixed_target_check)
 set_tests_properties(target_model_radius_override PROPERTIES
-    ENVIRONMENT "AUTOAIM_HEADLESS=1;AUTOAIM_TARGET_MODEL=province_fixed;AUTOAIM_TARGET_RADIUS_M=0.3"
+    ENVIRONMENT "AUTOAIM_HEADLESS=1;AUTOAIM_TARGET_MODEL=province_fixed;AUTOAIM_TARGET_RADIUS_M=0.3;AUTOAIM_OMEGA_PRIOR=0"
     TIMEOUT 30 RUN_SERIAL TRUE)
 
 foreach(profile free province_fixed)
@@ -105,3 +105,18 @@ add_test(NAME first_shot_tx COMMAND hero_first_shot_check --tx)
 set_tests_properties(first_shot first_shot_trace first_shot_tx PROPERTIES
     ENVIRONMENT "AUTOAIM_HEADLESS=1;AUTOAIM_XUC_DRY_RUN=1"
     TIMEOUT 30 RUN_SERIAL TRUE)
+
+add_executable(hero_rotation_prior_math_check "${HERO_ROOT}/tools/hero_rotation_prior_math_check.cpp")
+add_test(NAME rotation_prior_math COMMAND hero_rotation_prior_math_check)
+add_executable(hero_rotation_speed_check "${HERO_ROOT}/tools/hero_rotation_speed_check.cpp")
+target_link_libraries(hero_rotation_speed_check PRIVATE hero_check_core)
+add_test(NAME rotation_speed COMMAND hero_rotation_speed_check)
+set_tests_properties(rotation_speed PROPERTIES ENVIRONMENT "AUTOAIM_HEADLESS=1;AUTOAIM_TARGET_MODEL=province_fixed" TIMEOUT 30)
+add_test(NAME rotation_speed_free COMMAND hero_rotation_speed_check --free)
+set_tests_properties(rotation_speed_free PROPERTIES ENVIRONMENT "AUTOAIM_HEADLESS=1;AUTOAIM_TARGET_MODEL=free" TIMEOUT 30)
+add_test(NAME rotation_speed_trace COMMAND hero_rotation_speed_check --replay
+    "${HERO_ROOT}/tools/fixtures/rotation_observations_20261024.csv" "${CMAKE_CURRENT_BINARY_DIR}/rotation-speed-replay.csv")
+set_tests_properties(rotation_speed_trace PROPERTIES ENVIRONMENT "AUTOAIM_HEADLESS=1;AUTOAIM_TARGET_MODEL=province_fixed" TIMEOUT 30)
+
+add_test(NAME rotation_prior_invalid COMMAND hero_rotation_prior_math_check --invalid)
+set_tests_properties(rotation_prior_invalid PROPERTIES ENVIRONMENT "AUTOAIM_TARGET_PERIOD_S=nan" TIMEOUT 10)

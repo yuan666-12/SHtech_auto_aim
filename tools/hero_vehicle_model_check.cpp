@@ -108,7 +108,11 @@ void pipeline_checks(const std::string& root) {
     hardware::TimedSerial serial({},std::move(fake),bridge,attitudes,statuses);
     plan::PlannerSubModule planner(config,bridge,root+"/asset/plannerParam/planner_param_hero.yml");
     predict::Tracker tracker;Motion motion{4,false};
-    if(target_model::config().fixed())motion.radius=target_model::config().radius_m;
+    if(target_model::config().fixed()) {
+        motion.radius=target_model::config().radius_m;
+        const auto prior=rotation_speed::Config::from_environment(true);
+        if(prior.enabled)motion.omega=prior.magnitude();
+    }
     const auto start=predict::Tracker::TP::clock::now()-6100ms;
     auto data=std::make_shared<ThreadDataPack>();
     data->has_fixed_target=true;data->attitude_valid=true;data->robotstatus.robot_speed_mps=18.5;

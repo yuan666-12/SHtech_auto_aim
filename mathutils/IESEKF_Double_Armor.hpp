@@ -144,6 +144,12 @@ namespace mathutils
         // Applying a radius constraint is NOT a new tracking session.
         void set_state(const Matrix_x1d &state) { X_post = state; }
 
+        // A posterior correction is not a new tracking session; keep P_initial.
+        void set_estimate(const Matrix_x1d &state, const Matrix_xxd &covariance) {
+            X_post = X_pri = state;
+            P_post = P_pri = (0.5 * (covariance + covariance.transpose())).eval();
+        }
+
         /**
          * @brief 完整重置滤波器
          * @param f_ 状态转移函数
