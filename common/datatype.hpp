@@ -10,6 +10,7 @@
 
 // packages
 #include "center_fire_control.hpp"
+#include "aim_session.hpp"
 #include <cstdint>
 #include <array>
 #include <chrono>
@@ -118,6 +119,7 @@ struct RobotStatus {
     uint16_t enemy[6];                        // 敌方哨兵0、英雄1、工程2、步兵3、步兵4、步兵5
     GameState game_state = GameState::COMMON; // 是否设计远处
     EnemyColor enemy_color = EnemyColor::RED;
+    aim_session::State aim_session;
 };
 
 struct RobotCommand {
@@ -424,6 +426,7 @@ struct ThreadDataPack {
     double capture_ready_wait_ms = 0.0; // Wait BEFORE image acquisition, not image age.
     uint64_t camera_frame_number = 0, camera_device_timestamp = 0;
     int64_t camera_host_timestamp = 0;
+    std::chrono::steady_clock::time_point capture_time{};
     bool attitude_valid = false;
     double attitude_age_ms = INFINITY;
     double attitude_alignment_error_ms = INFINITY; /*!< 报文序号 */

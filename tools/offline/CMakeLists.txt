@@ -120,3 +120,14 @@ set_tests_properties(rotation_speed_trace PROPERTIES ENVIRONMENT "AUTOAIM_HEADLE
 
 add_test(NAME rotation_prior_invalid COMMAND hero_rotation_prior_math_check --invalid)
 set_tests_properties(rotation_prior_invalid PROPERTIES ENVIRONMENT "AUTOAIM_TARGET_PERIOD_S=nan" TIMEOUT 10)
+
+add_executable(hero_aim_session_check "${HERO_ROOT}/tools/hero_aim_session_check.cpp"
+    $<TARGET_OBJECTS:hero_vision_check>)
+target_link_libraries(hero_aim_session_check PRIVATE hero_check_core)
+add_test(NAME aim_session_province_fixed COMMAND hero_aim_session_check "${HERO_ROOT}")
+add_test(NAME aim_session_free COMMAND hero_aim_session_check "${HERO_ROOT}" --free)
+foreach(profile province_fixed free)
+    set_tests_properties(aim_session_${profile} PROPERTIES
+        ENVIRONMENT "AUTOAIM_HEADLESS=1;AUTOAIM_TARGET_MODEL=${profile};AUTOAIM_TARGET_RADIUS_M=0.265;AUTOAIM_TRACK_ONLY=0;AUTOAIM_XUC_DRY_RUN=0;AUTOAIM_XUC_LOG_FILE=${CMAKE_CURRENT_BINARY_DIR}/aim-session-${profile}.log"
+        TIMEOUT 60 RUN_SERIAL TRUE)
+endforeach()

@@ -452,6 +452,17 @@ namespace predict {
      * @brief 初始化目标状态参数
      * @details 设置目标的初始状态和默认参数
      */
+    void Tracker::clear_session() {
+        target = Target{};
+        target_init();
+        last_tp = TP{}; dt = 0.0;
+        detecting_counter = temp_lost_counter = yaw_speed_diverge_counter = 0;
+        rotation_prior_.reset();
+        whole_state_ekf.reset(target.tracked_state);
+        reset_yaw_kf(false);
+        reset_armor_x_kf(); reset_armor_y_kf(); reset_armor_z_kf();
+    }
+
     void Tracker::target_init() {
         target.predictor_state = TrackingState::IDLE;
         target.updating_model_type = target_model_config.fixed() ? UpdatingModelType::VEHICLE_MODEL

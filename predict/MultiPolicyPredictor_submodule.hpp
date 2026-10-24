@@ -120,6 +120,7 @@ namespace predict {
         int autoaim_mode_counter = 0; // 自瞄模式计数器，用于控制模式切换逻辑
         bool in_autoaim_mode = false; // 当前是否处于自瞄模式
 
+        aim_session::StageGuard session_guard_;
         bool target_locked_ = false;
         int fixed_target_id = 0; // 锁定目标的ID
 

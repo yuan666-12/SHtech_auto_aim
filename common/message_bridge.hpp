@@ -179,6 +179,7 @@ struct PlannerToSerialMessage {
     center_fire::Snapshot center_window;
     bool vehicle_model_trusted = false; // Diagnostic provenance, not fire permission.
     int model_rotation_count = 0, tracker_model = 0;
+    aim_session::Token aim_token;
 };
 
 /**

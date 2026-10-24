@@ -325,6 +325,7 @@ namespace predict {
          */
         explicit Tracker();
 
+        void clear_session(); // Called only by the owning predictor thread.
         void set_debug(bool debug_);
 
         void set_adjust(bool adjust_);

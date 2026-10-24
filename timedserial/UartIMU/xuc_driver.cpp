@@ -248,7 +248,8 @@ void XucDriver::transmit_cmd(float yaw, float yaw_spd, float pitch, float pitch_
     // deliberately opt-in so normal runtime behaviour is unchanged.
     // Bit 7 grants the auto-aim link. Dry-run allows packet construction and
     // logging while guaranteeing that nothing is written to the UART.
-    const bool fire_mode_enabled = fire_mode_enabled_.load();
+    const auto initial_session = aim_session_.snapshot();
+    const bool fire_mode_enabled = initial_session.managed ? initial_session.enabled : fire_mode_enabled_.load();
     const bool dry_run = xuc_dry_run();
     if (!fire_mode_enabled && !dry_run) {
         hit_diagnostics::append(fire_diagnostics_,{NAN,NAN,0,0,false,false,track_only(),"link_disabled"},PROJECT_DIR);
@@ -296,8 +297,17 @@ void XucDriver::transmit_cmd(float yaw, float yaw_spd, float pitch, float pitch_
     append_crc16(pkt.data(), pkt.size());
 
     ssize_t written = 0;
+    const bool current_session = aim_session_.with_current([&](const aim_session::State &live) {
+        if (!aim_session::accepts(live, command_session_)) return false;
+        if (!dry_run && fire_mode_enabled) written = write_port(pkt.data(), pkt.size());
+        return true;
+    });
+    if (!current_session) {
+        hit_diagnostics::append(fire_diagnostics_,
+            {NAN,NAN,0,0,aim_link_enabled(),dry_run,track_only(),"aim_session_stale"},PROJECT_DIR);
+        return;
+    }
     if (!dry_run && fire_mode_enabled) {
-        written = write_port(pkt.data(), pkt.size());
         if (written == static_cast<ssize_t>(pkt.size()))
             tx_fps_.count();
         else {
@@ -382,9 +392,13 @@ bool XucDriver::process_status_packet(const uint8_t *data) {
     static int last_mcu_tracking = -1;
     const int mcu_tracking = (pkt.flags & HeroXucFlags::ResetTracker) ? 1 : 0;
     const bool fire_mode = (pkt.flags & HeroXucFlags::FireMode) != 0;
+    const auto session = aim_session_.observe(fire_mode);
     const bool previous_fire_mode = fire_mode_enabled_.exchange(fire_mode);
     if (fire_mode != previous_fire_mode) {
         LOGM_S("[HeroXuc] fire_mode: %s", fire_mode ? "ENABLED" : "DISABLED");
+        if (session.managed)
+            LOGM_S("[AimSession] action=mode enabled=%d generation=%llu", int(fire_mode),
+                   static_cast<unsigned long long>(session.generation));
     }
     if (mcu_tracking != last_mcu_tracking) {
         LOGM_S("[HeroXuc] MCU track gate: %s", mcu_tracking ? "ACTIVE" : "inactive");
@@ -398,6 +412,8 @@ bool XucDriver::process_status_packet(const uint8_t *data) {
     }
 
     RobotStatus sts{};
+    sts.aim_session = session;
+    if (session.managed) sts.program_mode = fire_mode ? ProgramMode::AUTO_AIM : ProgramMode::IDLE;
     sts.robot_speed_mps = bullet_speed_mps_;
     sts.enemy_color = test_enemy_blue()
                           ? EnemyColor::BLUE

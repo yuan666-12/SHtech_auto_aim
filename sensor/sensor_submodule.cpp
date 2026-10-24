@@ -117,6 +117,7 @@ namespace sensor {
         }();
         const auto frame_time = frame_received - std::chrono::duration_cast<std::chrono::steady_clock::duration>(
                                                      std::chrono::duration<double, std::milli>(image_delay_ms));
+        data.capture_time = frame_time;
         data.time = std::chrono::high_resolution_clock::now() -
                     std::chrono::duration_cast<std::chrono::high_resolution_clock::duration>(
                         std::chrono::steady_clock::now() - frame_time);

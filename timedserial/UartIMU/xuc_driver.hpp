@@ -13,6 +13,7 @@
 
 #include "common.hpp"
 #include "../serial_interface.hpp"
+#include "target_model.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -69,6 +70,8 @@ class XucDriver : public SerialInterface {
     void close() override;
     bool fire_actuation_enabled() const override;
     bool aim_link_enabled() const override { return fire_mode_enabled_.load(); }
+    aim_session::State aim_session_state() const override { return aim_session_.snapshot(); }
+    void set_command_session(const aim_session::Token &token) override { command_session_ = token; }
     void set_fire_diagnostics(const fire_control::Diagnostics &diagnostic) override { fire_diagnostics_ = diagnostic; }
 
     void set_attitude_callback(AttitudeCallback cb) override;
@@ -102,6 +105,8 @@ class XucDriver : public SerialInterface {
     std::thread rx_thread_;
     std::atomic<bool> running_{false};
     std::atomic<bool> fire_mode_enabled_{false};
+    aim_session::Source aim_session_{target_model::config().fixed()};
+    aim_session::Token command_session_; // TX thread only.
     float bullet_speed_mps_ = 18.5f;
     fire_control::Diagnostics fire_diagnostics_; // Accessed only by the TX thread.
 

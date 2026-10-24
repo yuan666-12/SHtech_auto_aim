@@ -126,6 +126,12 @@ public:
     const Config& config() const { return config_; }
     const center_fire::Config& center_config() const { return center_window_.config(); }
 
+    void reset_session() {
+        center_window_.reset_entry(); // Keep the last actual fire decision's cooldown.
+        aligned_since_ = {}; first_aligned_rx_ = {}; last_check_ = {};
+        target_id_ = aim_mode_ = 0;
+    }
+
     Decision evaluate(const Input& in) {
         Decision out;
         // A single request is evaluated only on its first serial cycle.

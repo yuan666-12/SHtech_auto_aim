@@ -60,6 +60,7 @@ namespace plan {
         PlannerConfig config_;
         pipeline::bridge::PlannerToSerialBridge &planner_bridge;
 
+        aim_session::StageGuard session_guard_;
         Planner planner;
         uint64_t single_shot_sequence_ = 0;
 

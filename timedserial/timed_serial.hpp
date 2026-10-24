@@ -116,6 +116,8 @@ namespace hardware {
 
         // 来自 Planner 的命令数据（受 command_mutex_ 保护）
         command_array_t command_array_{};
+        aim_session::Token command_token_, command_token_cache_;
+        aim_session::State tx_session_;
         RobotCommand command_cache_{};
         Attitude attitude_at_last_frame_{}; // Planner 传来的上一帧姿态
         Attitude attitude_cache_{};

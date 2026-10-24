@@ -62,7 +62,7 @@ namespace predict {
                 "tracking_candidates=%zu attitude_valid=%d attitude_age_ms=%.3f alignment_error_ms=%.3f "
                 "capture_ready_wait_ms=%.3f image_age_ms=%.3f sensor_ms=%.3f preprocess_ms=%.3f "
                 "detect_ms=%.3f corner_ms=%.3f predict_ms=%.3f has_fixed_target=%d "
-                "state=%d trusted=%d count=%d\n",
+                "state=%d trusted=%d count=%d aim_enabled=%d aim_generation=%llu capture_ns=%lld\n",
                 std::chrono::duration<double, std::milli>(std::chrono::system_clock::now().time_since_epoch()).count(),
                 image_ns, data.index, static_cast<unsigned long long>(data.camera_frame_number),
                 static_cast<long long>(data.camera_host_timestamp),
@@ -74,7 +74,10 @@ namespace predict {
                 stage_ms(SubModuleName::CORNER_REFINE),
                 std::chrono::duration<double, std::milli>(now - started).count(), int(data.has_fixed_target),
                 static_cast<int>(data.target.predictor_state), int(data.target.vehicle_model_trust),
-                data.target.vehicle_model_rotation_count);
+                data.target.vehicle_model_rotation_count, int(data.robotstatus.aim_session.enabled),
+                static_cast<unsigned long long>(data.robotstatus.aim_session.generation),
+                static_cast<long long>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    data.capture_time.time_since_epoch()).count()));
             for (size_t i = 0; i < slots.size(); ++i) {
                 const auto &slot = slots[i];
                 if (std::strcmp(slot.action, "not_run") == 0) continue;
@@ -339,6 +342,22 @@ namespace predict {
 
     void MultiPolicyPredictorSubModule::predict(std::shared_ptr<ThreadDataPack> data) {
         PredictorFrameDiagnostic diagnostic(*data, trackers.data());
+        const auto session_action = session_guard_.inspect(data->robotstatus.aim_session, data->capture_time);
+        if (session_action == aim_session::Action::Reject) {
+            diagnostic.outcome = "stale_aim_session";
+            data->target = Target{}; data->has_fixed_target = false;
+            return;
+        }
+        if (session_action == aim_session::Action::Reset) {
+            for (auto &tracker : trackers) tracker.clear_session();
+            for (auto &measurement : tracked_measurements) measurement.setZero();
+            for (auto &measurement : secondary_tracked_measurements) measurement.setZero();
+            tracked_armors = {};
+            target_locked_ = in_autoaim_mode = false;
+            fixed_target_id = autoaim_mode_counter = 0;
+            LOGM_S("[AimSession] action=tracker_reset generation=%llu",
+                   static_cast<unsigned long long>(data->robotstatus.aim_session.generation));
+        }
         if (!data->attitude_valid) {
             diagnostic.outcome = "invalid_attitude";
             data->target = Target{};

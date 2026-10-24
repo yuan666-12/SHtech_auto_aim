@@ -69,6 +69,14 @@ namespace hardware {
      * 需要保护共享数据的访问
      */
     void TimedSerial::handle_planner_message(const pipeline::bridge::PlannerToSerialMessage &msg) {
+        const auto live = driver_->aim_session_state();
+        if (!aim_session::accepts(live, msg.aim_token)) {
+            if (live.enabled)
+                LOGM_S("[AimSession] action=drop_plan generation=%llu message_generation=%llu",
+                       static_cast<unsigned long long>(live.generation),
+                       static_cast<unsigned long long>(msg.aim_token.session.generation));
+            return;
+        }
         const auto finite_attitude = [](const Attitude &a) {
             return std::isfinite(a.yaw()) && std::isfinite(a.pitch()) && std::isfinite(a.roll());
         };
@@ -81,6 +89,9 @@ namespace hardware {
                            });
         const Attitude pose = finite_attitude(msg.attitude) ? msg.attitude : handle_attitude_get();
         std::lock_guard<std::mutex> lock(command_mutex_);
+        // The mode may have changed while this callback waited for the command lock.
+        if (!aim_session::accepts(driver_->aim_session_state(), msg.aim_token)) return;
+        command_token_ = msg.aim_token;
         command_start_time_ = std::chrono::steady_clock::now();
         attitude_at_last_frame_ = pose;
         observation_deadline_ = msg.observation_deadline;
@@ -123,9 +134,14 @@ namespace hardware {
     }
 
     RobotStatus TimedSerial::handle_robotstatus_get() {
-        std::lock_guard<std::mutex> lock(sensor_mutex_);
-
-        return latest_robot_status_;
+        RobotStatus status;
+        { std::lock_guard<std::mutex> lock(sensor_mutex_); status = latest_robot_status_; }
+        const auto live = driver_->aim_session_state();
+        if (live.managed) {
+            status.aim_session = live;
+            status.program_mode = live.enabled ? ProgramMode::AUTO_AIM : ProgramMode::IDLE;
+        }
+        return status;
     }
 
     /**
@@ -161,6 +177,10 @@ namespace hardware {
                 latest_robot_status_.enemy_color = sts.enemy_color;
             }
 
+            if (sts.aim_session.managed) {
+                latest_robot_status_.aim_session = sts.aim_session;
+                latest_robot_status_.program_mode = sts.aim_session.enabled ? ProgramMode::AUTO_AIM : ProgramMode::IDLE;
+            }
             snapshot = latest_robot_status_;
             const uint64_t key = uint64_t(snapshot.enemy_color) | (uint64_t(snapshot.program_mode) << 8);
             report = config_.debug.log_text &&
@@ -180,6 +200,32 @@ namespace hardware {
      */
     bool TimedSerial::read_latest_command_and_attitude() {
         std::lock_guard<std::mutex> lock(command_mutex_);
+        const auto live = driver_->aim_session_state();
+        if (live.managed && !aim_session::same(live, tx_session_)) {
+            tx_session_ = live;
+            fire_gate_.reset_session();
+            first_shot_gate_.reset(); first_shot_status_ = {};
+            shot_hold_until_ = {};
+            filtered_target_initialized_ = false;
+            LOGM_S("[AimSession] action=tx_reset enabled=%d generation=%llu",
+                   int(live.enabled), static_cast<unsigned long long>(live.generation));
+        }
+        if (!aim_session::accepts(live, command_token_)) {
+            command_array_ = {}; command_cache_ = {};
+            plan_period_ = std::chrono::microseconds{0};
+            have_fresh_command_ = false;
+            fire_control_eligible_ = fire_eligible_cache_ = false;
+            center_window_ = {}; center_window_cache_ = {};
+            model_trusted_ = model_trusted_cache_ = false;
+            model_rotation_count_ = model_rotation_count_cache_ = 0;
+            tracker_model_ = tracker_model_cache_ = 0;
+            observation_deadline_ = {}; observation_deadline_cache_ = {};
+            fire_aim_mode_ = fire_aim_mode_cache_ = AimedTargetType::NONE;
+            single_shot_id_ = single_shot_id_cache_ = 0;
+            command_token_ = {}; command_token_cache_ = {};
+            return false;
+        }
+        command_token_cache_ = command_token_;
         fire_eligible_cache_ = fire_control_eligible_;
         fire_aim_mode_cache_ = fire_aim_mode_;
         single_shot_id_cache_ = single_shot_id_;
@@ -335,6 +381,7 @@ namespace hardware {
     }
 
     void TimedSerial::transmit_cached_command() {
+        if (!aim_session::accepts(driver_->aim_session_state(), command_token_cache_)) return;
         float yaw_target = attitude_cache_.yaw() + command_cache_.yaw_angle;
         float pitch_target = attitude_cache_.pitch() + command_cache_.pitch_angle;
         const bool target_valid = command_cache_.target_id != 0 && command_cache_.distance > 0.0f &&
@@ -381,6 +428,7 @@ namespace hardware {
         }
         record_fire_diagnostics(fire_input, fire_decision, holding_shot, planned_yaw, planned_pitch,
                                 decision_started, decision_finished);
+        driver_->set_command_session(command_token_cache_);
         driver_->transmit_cmd(yaw_target, command_cache_.yaw_speed, pitch_target, command_cache_.pitch_speed,
                               command_cache_.yaw_acc, command_cache_.pitch_acc, command_cache_.distance,
                               fire_decision.advice, command_cache_.target_id);

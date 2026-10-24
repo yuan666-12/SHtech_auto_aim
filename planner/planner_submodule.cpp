@@ -26,6 +26,9 @@ namespace plan {
     }
 
     SubModuleResult PlannerSubModule::process(std::shared_ptr<ThreadDataPack> data, const pipeline::BasicTask *parent) {
+        const auto session_action = session_guard_.inspect(data->robotstatus.aim_session, data->capture_time);
+        if (session_action == aim_session::Action::Reject) return SubModuleResult::SKIP;
+        if (session_action == aim_session::Action::Reset) planner.planner_reset();
         auto attitude_yaw = data->attitude.yaw() / 180 * M_PI;     // 机器人偏航角（转换为弧度）
         auto attitude_pitch = data->attitude.pitch() / 180 * M_PI; // 机器人俯仰角（转换为弧度）
         auto tp = data->time;                                      // 当前时间戳
@@ -62,6 +65,7 @@ namespace plan {
 
         pipeline::bridge::PlannerToSerialMessage msg{generate_command_array(data->robotcommand), data->attitude,
                                                      plan_period};
+        msg.aim_token = {data->robotstatus.aim_session, data->capture_time};
         msg.aim_mode = plan.aimed_target_type;
         msg.fire_control_eligible = has_fixed_target && data->attitude_valid &&
                                     target.predictor_state == TrackingState::TRACKING && target.observation_updated &&
