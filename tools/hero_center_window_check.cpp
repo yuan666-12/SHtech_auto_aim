@@ -115,6 +115,18 @@ void geometry_checks() {
     require(intersect(faster, now, 0, 10, c).inside, "18.5 m/s trajectory intersects the moving plate");
     faster.bullet_speed = 10;
     require(!intersect(faster, now, 0, 10, c).inside, "old speed gives a different intersection for the same target");
+    auto measured = fixture(now, true, 6, 15);
+    const auto slow_hit = intersect(measured, now, 0, 10, c);
+    require(slow_hit.inside, "measured 15 m/s trajectory intersects the moving plate");
+    const auto fast_solution = mathutils::solve_ballistic_trajectory(
+        Eigen::Vector3d(0, 3, measured.state[4]), 18.5, true);
+    const double advance = slow_hit.flight_s - fast_solution.flight_time;
+    require(fast_solution.flight_time > 0 && advance > 0, "slower flight requires an earlier command for the same encounter");
+    auto faster_same_target = measured;
+    faster_same_target.bullet_speed = 18.5;
+    const auto later_command = now + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(advance));
+    require(intersect(faster_same_target, later_command, 0, fast_solution.pitch * 180 / pi, c).inside,
+            "different speeds meet the same moving plate when command times account for flight time");
     require(!intersect(s, now + 51ms, 0, 10, Config{.135, .056, .07, .005, 30, false}).inside,
             "invalid rectangle tuning fails closed");
     s = fixture(now, true);
@@ -154,8 +166,18 @@ void geometry_checks() {
     s = fixture(now);
     s.yaw_comp_rad = .03;
     s.pitch_comp_rad = .02;
-    require(intersect(s, now, .03 * 180 / pi, 10 + .02 * 180 / pi, c).inside,
-            "empirical angle compensation is reversed for actual launch direction");
+    const double calibrated_rx_pitch = 10 + s.pitch_comp_rad * 180 / pi;
+    const auto actual = intersect(s, now, 0, calibrated_rx_pitch, c);
+    const auto reference = intersect(fixture(now), now, 0, 10, c);
+    require(actual.inside && actual.armor == reference.armor && std::abs(actual.flight_s - reference.flight_s) < 1e-12 &&
+                std::abs(actual.lateral_m - reference.lateral_m) < 1e-12 && std::abs(actual.vertical_m - reference.vertical_m) < 1e-12,
+            "RX pitch minus pitch compensation reproduces the empirical trajectory without changing RX yaw");
+    require(!intersect(s, now, .03 * 180 / pi, calibrated_rx_pitch, c).inside,
+            "planner yaw compensation cannot conceal an actual yaw miss");
+    require(!intersect(s, now, 0, 10, c).inside,
+            "omitting the selected pitch calibration changes the height intersection");
+    require(!intersect(s, now, 0, calibrated_rx_pitch + 1, c).inside,
+            "pitch calibration preserves rejection of an additional pitch miss");
     s = fixture(now);
     s.valid = false;
     require(!intersect(s, now, 0, 10, c).inside, "missing trusted model cannot open a window");
@@ -352,7 +374,7 @@ void bridge_checks(const std::string &root) {
     auto data = std::make_shared<ThreadDataPack>();
     data->has_fixed_target = true;
     data->attitude_valid = true;
-    data->robotstatus.robot_speed_mps = 18.5;
+    data->robotstatus.robot_speed_mps = 15;
     data->attitude = Attitude(0, 10, 0);
     data->time = std::chrono::high_resolution_clock::now() - 200ms;
     auto &target = data->target;
@@ -371,11 +393,17 @@ void bridge_checks(const std::string &root) {
             "trusted vehicle uses center at zero rotation speed");
     require(captured.fire_control_eligible && captured.center_window.valid,
             "production bridge publishes valid window model");
-    require(captured.vehicle_model_trusted && captured.center_window.bullet_speed == 18.5,
-            "production bridge retains model trust and the supplied 18.5 m/s bullet speed");
+    require(captured.vehicle_model_trusted && captured.center_window.bullet_speed == 15,
+            "production bridge retains model trust and the measured 15 m/s bullet speed");
     require(std::chrono::duration<double>(center_fire::Clock::now() - captured.center_window.state_time).count() >= .2,
             "model snapshot retains image age");
     require(std::abs(captured.center_window.release_delay_s - .23) < 1e-8, "snapshot uses configured trigger delay");
+    const auto trajectory = mathutils::solve_ballistic_trajectory(Eigen::Vector3d(0, 3, .1), 15, true);
+    const double final_yaw = (captured.attitude.yaw() + captured.command_array[0].yaw_angle) * center_fire::pi / 180;
+    const double final_pitch = (captured.attitude.pitch() + captured.command_array[0].pitch_angle) * center_fire::pi / 180;
+    require(std::abs(final_yaw - captured.center_window.yaw_comp_rad) < 1e-6 &&
+                std::abs(final_pitch - trajectory.pitch - captured.center_window.pitch_comp_rad) < 1e-6,
+            "production target angles retain configured yaw and pitch compensation");
     target.vehicle_model_trust = false;
     planner.process(data, nullptr);
     require(!captured.vehicle_model_trusted && !captured.center_window.valid &&

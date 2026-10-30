@@ -29,7 +29,7 @@
 namespace {
     float configured_bullet_speed_mps() {
         const char *text = std::getenv("AUTOAIM_BULLET_SPEED_MPS");
-        if (!text) return 18.5f;
+        if (!text) return 15.0f; // Measured Hero muzzle speed; explicit startup overrides remain available.
         char *end = nullptr;
         const double speed = std::strtod(text, &end);
         if (end == text || !end || *end || !std::isfinite(speed) || speed <= 0 || speed > 100) return NAN;

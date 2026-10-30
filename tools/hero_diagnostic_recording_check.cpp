@@ -40,6 +40,12 @@ int main(int argc,char** argv) {
         }
         auto changed=d;changed.input.center_window.state[2]+=.4;
         require(hit_diagnostics::geometry(changed).probe==g.probe,"fixed-time curve independent of plate");
+        auto other_compensation=d;other_compensation.input.center_window.yaw_comp_rad=-.12;
+        require(hit_diagnostics::geometry(other_compensation).probe==g.probe,
+                "diagnostic projectile yaw is independent of planner yaw compensation");
+        other_compensation.input.center_window.pitch_comp_rad+=.02;
+        require(hit_diagnostics::geometry(other_compensation).probe!=g.probe,
+                "diagnostic trajectory applies the selected empirical pitch correction");
       }
       require(crossed>400 && odd>0,"moving even/odd planes covered");
       const auto row=hit_diagnostics::split(hit_diagnostics::encode_geometry(d,{},1,fire_control::Clock::now()));

@@ -107,7 +107,7 @@ class XucDriver : public SerialInterface {
     std::atomic<bool> fire_mode_enabled_{false};
     aim_session::Source aim_session_{target_model::config().fixed()};
     aim_session::Token command_session_; // TX thread only.
-    float bullet_speed_mps_ = 18.5f;
+    float bullet_speed_mps_ = 15.0f;
     fire_control::Diagnostics fire_diagnostics_; // Accessed only by the TX thread.
 
     static constexpr size_t RX_BUF_SIZE = 256;

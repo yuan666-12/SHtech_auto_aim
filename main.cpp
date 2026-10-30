@@ -1,3 +1,4 @@
+#include "startup_defaults.hpp"
 #include "runtime_threads.hpp"
 #include "target_model.hpp"
 #include "rotation_speed_prior.hpp"
@@ -245,7 +246,18 @@ bool init() {
     return false;
 }
 
-int main() {
+int main(int argc, char** argv) {
+    try {
+        startup_defaults::apply();
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
+    // 只打印有效启动设置并退出，不初始化相机、串口或诊断文件。
+    if (argc == 2 && std::strcmp(argv[1], "--check-startup") == 0) {
+        startup_defaults::print(std::cout);
+        return 0;
+    }
     if (!init()) {
         LOGE_S("Init Fail, Quit");
         release_resources();

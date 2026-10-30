@@ -170,7 +170,8 @@ inline Geometry geometry(const fire_control::Diagnostics& d) {
     if(!std::isfinite(in.rx_yaw) || !std::isfinite(in.rx_pitch) ||
        !std::isfinite(s.bullet_speed) || s.bullet_speed<=0 || s.bullet_speed>100 ||
        !std::isfinite(s.yaw_comp_rad) || !std::isfinite(s.pitch_comp_rad))return g;
-    const double yaw=in.rx_yaw*center_fire::pi/180-s.yaw_comp_rad;
+    // Match the production window: actual RX yaw, RX pitch minus pitch compensation.
+    const double yaw=in.rx_yaw*center_fire::pi/180;
     const double pitch=in.rx_pitch*center_fire::pi/180-s.pitch_comp_rad;
     const double vh=s.bullet_speed*std::cos(pitch),vz=s.bullet_speed*std::sin(pitch);
     if(vh<=1e-6)return g;
@@ -254,6 +255,7 @@ public:
               <<" target_model="<<target_model::config().name()
               <<" radius_m="<<target_model::config().initial_radius_m()
               <<" stationary_center="<<target_model::config().fixed()
+              <<" projectile_yaw=actual_rx projectile_pitch=rx_minus_pitch_comp"
               <<" first_shot_ms="<<first_config.stable_ms<<" first_shot_rate_dps="<<first_config.max_rate_dps
               <<" first_shot_yaw_span="<<first_config.yaw_span_deg<<" first_shot_pitch_span="<<first_config.pitch_span_deg
               <<" first_shot_reposition="<<first_config.reposition_deg
@@ -263,7 +265,7 @@ public:
               <<" config="<<std::quoted(config?config:"")<<'\n'<<columns<<'\n';
         const std::string detail_header=std::string(
             "# schema=hero-hit-geometry-v1 units=m,rad,s coords=world_xyz origin=gimbal_axis_intersection "
-            "timing=steady_ns probe_flight_s=0.2 projectile_direction=actual_rx_minus_compensation\n")+
+            "timing=steady_ns probe_flight_s=0.2 projectile_yaw=actual_rx projectile_pitch=rx_minus_pitch_comp\n")+
             geometry_columns+"\n";
         if(session_ && !session_->reserve(header.str().size()+
                 (geometry_file_?detail_header.size():0))) {

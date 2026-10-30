@@ -51,7 +51,7 @@ int main() {
         XucDriver driver("no-hardware");float received=0;
         driver.set_robot_status_callback([&](const auto& status){received=status.robot_speed_mps;});
         feed_rx(driver);
-        require(received==18.5f,"default 18.5 m/s passes through the real CRC decoder and status callback");
+        require(received==15.0f,"default 15 m/s passes through the real CRC decoder and status callback");
         require(driver.stm32_fd_==-1,"decoder test never opens a UART");
         const auto now=fire_control::Clock::now();
         fire_control::Input in;in.now=in.rx_time=now;in.eligible=true;in.target_id=2;
@@ -59,17 +59,18 @@ int main() {
         in.desired_pitch=in.sent_pitch=10;
         auto& s=in.center_window;s.valid=true;s.state_time=now;s.bullet_speed=received;
         s.release_delay_s=.23;s.air_resistance=true;
-        const double angle=10*center_fire::pi/180;
+        s.yaw_comp_rad=.03;s.pitch_comp_rad=.02; // Only pitch correction changes the window trajectory.
+        const double angle=in.rx_pitch*center_fire::pi/180-s.pitch_comp_rad;
         const double flight=std::expm1(center_fire::drag_k*3)/center_fire::drag_k/(received*std::cos(angle));
         s.state={3.26,0,0,0,received*std::sin(angle)*flight-.5*center_fire::gravity*flight*flight,0,0,0,.26,0,0};
         fire_control::Gate gate;
         fire_control::Diagnostics d;d.valid=true;d.eligible=d.model_trusted=d.observation_fresh=true;
         d.requested=d.gate_requested=2;d.aim_mode=4;d.model_speed_mps=received;d.rx_age_ms=0;d.observation_remaining_ms=200;
-        d.decision=gate.evaluate(in);require(d.decision.advice==2,"real gate opens an 18.5 m/s model window");
+        d.decision=gate.evaluate(in);require(d.decision.advice==2,"real gate opens the measured 15 m/s model window");
         driver.set_fire_diagnostics(d);driver.transmit_cmd(0,0,10,0,0,0,3,d.decision.advice,2);
         auto rows=tx_rows();auto row=last(rows);
-        require(row.find("bullet_speed_mps=18.500")!=std::string::npos &&
-                row.find("model_speed_mps=18.500")!=std::string::npos,"TX exposes configured and model speed");
+        require(row.find("bullet_speed_mps=15.000")!=std::string::npos &&
+                row.find("model_speed_mps=15.000")!=std::string::npos,"TX exposes configured and model speed");
         require(row.find("gate_reason=ready window_reason=ready")!=std::string::npos &&
                 row.find("model_trusted=1")!=std::string::npos &&
                 row.find("hit_available=1 hit_front=1 hit_armor=0")!=std::string::npos,

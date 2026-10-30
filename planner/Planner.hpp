@@ -96,6 +96,7 @@ namespace predict {
         /// @brief 位置变化阈值 (米)，用于检测装甲板切换
         const double same_position_threshold = 0.2;
 
+        /// @brief Minimum single-shot interval (seconds); override: AUTOAIM_SHOOT_INTERVAL_S.
         const double shoot_interval = 0.5;
 
       private:

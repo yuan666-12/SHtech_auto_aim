@@ -1,0 +1,16 @@
+%YAML:1.0
+---
+# Ideal synthetic gimbal: no physical bias or empirical command compensation.
+# Production Hero compensation remains in asset/plannerParam/planner_param_hero.yml.
+
+planner:
+  force_center_preaim: 1          # Trusted vehicle model always uses center preaim; untrusted only tracks.
+  latency: 150                    # Average total latency from PC to yaw action complete (in ms)
+  single_shoot_latency: 230       # (in ms), shoot latency of single shoot
+  continue_shoot_latency: 45     # (in ms), shoot frequency of continuous shoot
+  same_trace_threshold: 0.003   # (in rad), trajectory tracking consistency threshold
+  pitch_comp: 0
+  yaw_comp: 0
+  disable_vehicle_center_shoot_mode: 0
+  disable_armor_with_vehicle_shoot_mode: 1
+  consider_air_resistence: 1

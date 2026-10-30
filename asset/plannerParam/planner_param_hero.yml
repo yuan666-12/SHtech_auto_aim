@@ -3,13 +3,16 @@
 # 英雄规划器参数（由旧参数迁移，需实车逐项复核）
 
 planner:
-  force_center_preaim: 1          # Trusted vehicle model always uses center preaim; untrusted only tracks.
-  latency: 150                    # Average total latency from PC to yaw action complete (in ms)
-  single_shoot_latency: 230       # (in ms), shoot latency of single shoot
-  continue_shoot_latency: 45     # (in ms), shoot frequency of continuous shoot
-  same_trace_threshold: 0.003   # (in rad), trajectory tracking consistency threshold
-  pitch_comp: 0.075               # Pitch compensation
-  yaw_comp: 0.010                # Yaw compensation
+  force_center_preaim: 1          # 模型可信时强制使用中心预瞄；模型不可信时仅跟踪
+  latency: 150                    # 规划控制响应延迟模型（毫秒），不是单发出膛延迟
+  single_shoot_latency: 340     # 单发指令至出膛的延迟模型（毫秒）；同时用于开火后的方向保持
+  continue_shoot_latency: 45     # 连续射击预测延迟（毫秒），保留的旧策略参数
+  same_trace_threshold: 0.003   # 轨迹一致性阈值（弧度），用于旧轨迹分支
+  pitch_comp: 0.039            # 俯仰补偿（弧度）；目标角加此值，窗口从回传俯仰角扣除此值
+  yaw_comp: -0.012                # 偏航补偿（弧度）；仅加到目标角，窗口直接使用回传偏航角
+
   disable_vehicle_center_shoot_mode: 0
   disable_armor_with_vehicle_shoot_mode: 1
   consider_air_resistence: 1
+
+#env AUTOAIM_TARGET_MODEL=province_fixed AUTOAIM_HEADLESS=1 AUTOAIM_TRACK_ONLY=0 AUTOAIM_DIAG=1 AUTOAIM_CENTER_WIDTH_M=0.135 AUTOAIM_CENTER_HEIGHT_M=0.056 AUTOAIM_CENTER_MARGIN_X_M=0.010 AIM_CENTER_MARGIN_Z_M=0.004 AUTOAIM_SHOOT_INTERVAL_S=1 ./build_real/auto-aim

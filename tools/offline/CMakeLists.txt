@@ -48,7 +48,7 @@ target_link_libraries(hero_dropout_check PRIVATE hero_check_core)
 add_test(NAME dropout COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/run_case.py"
     "${CMAKE_CURRENT_BINARY_DIR}/dropout-xuc.log" $<TARGET_FILE:hero_dropout_check> "${HERO_ROOT}")
 set_tests_properties(dropout PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE)
-foreach(name algorithm tracking center_window console capture vehicle_model tx_diagnostics)
+foreach(name algorithm tracking center_window console capture vehicle_model tx_diagnostics shoot_interval)
     add_executable(hero_${name}_check "${HERO_ROOT}/tools/hero_${name}_check.cpp")
     target_link_libraries(hero_${name}_check PRIVATE hero_check_core)
     add_test(NAME ${name} COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/run_case.py"
@@ -131,3 +131,9 @@ foreach(profile province_fixed free)
         ENVIRONMENT "AUTOAIM_HEADLESS=1;AUTOAIM_TARGET_MODEL=${profile};AUTOAIM_TARGET_RADIUS_M=0.265;AUTOAIM_TRACK_ONLY=0;AUTOAIM_XUC_DRY_RUN=0;AUTOAIM_XUC_LOG_FILE=${CMAKE_CURRENT_BINARY_DIR}/aim-session-${profile}.log"
         TIMEOUT 60 RUN_SERIAL TRUE)
 endforeach()
+
+add_executable(hero_launch_defaults_check "${HERO_ROOT}/tools/hero_launch_defaults_check.cpp")
+target_link_libraries(hero_launch_defaults_check PRIVATE hero_check_core)
+add_test(NAME launch_defaults COMMAND hero_launch_defaults_check "${HERO_ROOT}")
+add_test(NAME launch_overrides COMMAND hero_launch_defaults_check "${HERO_ROOT}" --override)
+set_tests_properties(launch_defaults launch_overrides PROPERTIES TIMEOUT 15 RUN_SERIAL TRUE)

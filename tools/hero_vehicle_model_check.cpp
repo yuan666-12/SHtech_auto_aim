@@ -5,6 +5,7 @@
 #include "timed_serial.hpp"
 #include <condition_variable>
 #include <iostream>
+#include <map>
 #include <thread>
 using namespace std::chrono_literals;
 int checks=0;
@@ -106,7 +107,8 @@ void pipeline_checks(const std::string& root) {
     plan::PlannerConfig config;config.debug.show_image=false;config.debug.log_text=false;
     auto fake=std::make_unique<Driver>();auto* driver=fake.get();
     hardware::TimedSerial serial({},std::move(fake),bridge,attitudes,statuses);
-    plan::PlannerSubModule planner(config,bridge,root+"/asset/plannerParam/planner_param_hero.yml");
+    // Synthetic observations and actual RX share ideal axes; production calibration is separate.
+    plan::PlannerSubModule planner(config,bridge,root+"/tools/fixtures/planner_raw_rx.yml");
     predict::Tracker tracker;Motion motion{4,false};
     if(target_model::config().fixed()) {
         motion.radius=target_model::config().radius_m;
@@ -115,7 +117,7 @@ void pipeline_checks(const std::string& root) {
     }
     const auto start=predict::Tracker::TP::clock::now()-6100ms;
     auto data=std::make_shared<ThreadDataPack>();
-    data->has_fixed_target=true;data->attitude_valid=true;data->robotstatus.robot_speed_mps=18.5;
+    data->has_fixed_target=true;data->attitude_valid=true;data->robotstatus.robot_speed_mps=15;
     data->attitude=Attitude(0,10,0);
     for(int k=0;k<=300;++k){double t=.02*k;auto z=motion.observation(t);auto tp=stamp(start,t);
         if(k)tracker.track(z,z,1,2,tp,0);else tracker.reset_target(z,tp);}
@@ -124,12 +126,17 @@ void pipeline_checks(const std::string& root) {
         explicit Run(hardware::TimedSerial& s):serial(s),worker(std::ref(s)){serial.start();}
         ~Run(){serial.terminate();worker.join();}} run(serial);
     const auto wall=std::chrono::steady_clock::now();
-    int observations=0;bool finished=false;
+    // Warm-up already supplied t=6.0; the next frame is t>=6.02, never a duplicate sub-microsecond timestamp.
+    int observations=1;bool finished=false;
     while(std::chrono::steady_clock::now()-wall<1500ms){
         double elapsed=std::chrono::duration<double>(std::chrono::steady_clock::now()-wall).count();
         if(elapsed>=observations*.02){
             double t=6+elapsed;auto z=motion.observation(t);auto tp=stamp(start,t);
             tracker.track(z,z,1,2,tp,0);data->target=tracker.get_target();
+            if(observations==1) {
+                require(!data->target.filter_reset && data->target.vehicle_model_trust,
+                        "first live observation preserves the warmed-up model with a strictly later timestamp");
+            }
             data->target.tracked_armor.tag_id=2;data->time=tp;
             planner.process(data,nullptr);++observations;
         }
@@ -144,6 +151,19 @@ void pipeline_checks(const std::string& root) {
             require(p.diagnostic.model_trusted&&p.diagnostic.model_rotation_count==3&&
                     p.diagnostic.aim_mode==4&&p.diagnostic.decision.window.hit.inside,
                     "code 2 carries real three-switch trust and an actual center intersection");
+        }
+    }
+    if(!finished) {
+        std::lock_guard<std::mutex> lock(driver->mutex);
+        std::map<std::string,int> reasons;
+        for(const auto& packet:driver->packets)
+            ++reasons[std::string(fire_control::name(packet.diagnostic.decision.reason))+"/"+packet.diagnostic.decision.window.reason];
+        for(const auto& [reason,count]:reasons)std::cout<<"PIPELINE_GATE "<<reason<<" count="<<count<<"\n";
+        if(!driver->packets.empty()) {
+            const auto& d=driver->packets.back().diagnostic;const auto& h=d.decision.window.hit;
+            std::cout<<"PIPELINE_LAST rx="<<d.input.rx_yaw<<","<<d.input.rx_pitch
+                     <<" side="<<h.lateral_m<<" height="<<h.vertical_m
+                     <<" trusted="<<d.model_trusted<<" eligible="<<d.eligible<<"\n";
         }
     }
     require(finished,"real Tracker -> Planner -> timed TX enters center mode and sends 2 then 0");

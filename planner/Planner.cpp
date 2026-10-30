@@ -13,6 +13,7 @@
 
 #include "Planner.hpp"
 #include <cstdlib>
+#include <cerrno>
 #include <stdexcept>
 #include <sstream>
 #include "tracking_policy.hpp"
@@ -23,6 +24,21 @@
 #if ASSESSMENT_CRITERIA
 int vx_constant_counter = 0;
 #endif
+
+namespace {
+    double shoot_interval_from_environment() {
+        const char *text = std::getenv("AUTOAIM_SHOOT_INTERVAL_S");
+        if (!text) return 0.5;
+        char *end = nullptr;
+        errno = 0;
+        const double value = std::strtod(text, &end);
+        // Match the fire-window snapshot's existing upper bound of 10 seconds.
+        if (end == text || *end || errno == ERANGE || !std::isfinite(value) ||
+            value <= 0 || value > 10)
+            throw std::invalid_argument("AUTOAIM_SHOOT_INTERVAL_S must be finite and in (0,10] seconds");
+        return value;
+    }
+}
 
 namespace predict {
     int a = 0;
@@ -35,7 +51,7 @@ namespace predict {
      * @details 初始化MPC求解器和默认参数
      */
     Planner::Planner(const std::string &planner_param, bool debug_)
-        : debug(debug_), armor_jump(false), armor_jump_tp(std::chrono::high_resolution_clock::now()),
+        : shoot_interval(shoot_interval_from_environment()), debug(debug_), armor_jump(false), armor_jump_tp(std::chrono::high_resolution_clock::now()),
           coord_transformer(CoordTransformer::Get()), fire_enable_tp(std::chrono::high_resolution_clock::now()) {
         cv::FileStorage fin(planner_param, cv::FileStorage::READ);
 

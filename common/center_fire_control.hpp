@@ -18,6 +18,7 @@ struct Snapshot {
     std::array<double,11> state{};
     Clock::time_point state_time{};
     double bullet_speed = 0, release_delay_s = 0, shot_interval_s = .2;
+    // Yaw compensation is metadata; pitch compensation calibrates the empirical pitch model.
     double yaw_comp_rad = 0, pitch_comp_rad = 0;
     bool air_resistance = false, valid = false;
 };
@@ -76,7 +77,8 @@ inline Hit intersect(const Snapshot& s,Clock::time_point now,
     Hit out;
     if(!c.valid || !valid(s,now) || !std::isfinite(rx_yaw_deg) ||
        !std::isfinite(rx_pitch_deg)) return out;
-    const double yaw=rx_yaw_deg*pi/180-s.yaw_comp_rad;
+    // Use actual RX yaw and retain the user-selected empirical pitch correction.
+    const double yaw=rx_yaw_deg*pi/180;
     const double pitch=rx_pitch_deg*pi/180-s.pitch_comp_rad;
     const double dx=-std::sin(yaw),dy=std::cos(yaw);
     const double vh=s.bullet_speed*std::cos(pitch),vz=s.bullet_speed*std::sin(pitch);
