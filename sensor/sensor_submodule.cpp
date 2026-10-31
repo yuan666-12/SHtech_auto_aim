@@ -6,6 +6,9 @@
 //
 
 #include "sensor_submodule.hpp"
+#ifdef ENABLE_HERO_SHARED_FRAME
+#include "shared_frame_wrapper.hpp"
+#endif
 #include "calibration_capture.hpp"
 #include "diagnostic_capture.hpp"
 
@@ -32,9 +35,16 @@ namespace sensor {
           status_bridge(status_bridge) {
         LOGM_S("[sensor_submodule] constructing with video: %s", VideoSource.c_str());
         const bool is_camera_source = (VideoSource == "0");
+        shared_source_ = VideoSource == "shared" || VideoSource.compare(0, 7, "shared:") == 0;
 
-        // 初始化视频源
-        if (is_camera_source) {
+        // Shared input only consumes frames; it never opens or manages a camera.
+        if (shared_source_) {
+#ifdef ENABLE_HERO_SHARED_FRAME
+            video = std::make_unique<SharedFrameWrapper>(VideoSource == "shared" ? std::string{} : VideoSource.substr(7));
+#else
+            throw std::runtime_error("shared source requested without HERO_SHARED_FRAME_ROOT");
+#endif
+        } else if (is_camera_source) {
 #ifdef ENABLE_HIKCAM
             video = std::make_unique<HikCamWrapper>();
 #else
@@ -103,6 +113,9 @@ namespace sensor {
 
     bool SensorSubModule::read_frame(ThreadDataPack &data, CaptureContext &context) {
         bool state = video->read(data.frame, config_.debug.log_text);
+        // Missing/stale frames are a normal producer outage. Never reopen a camera
+        // or rewrite the old frame's capture timestamp while waiting for recovery.
+        if (!state && shared_source_) return false;
         const auto read_completed = std::chrono::steady_clock::now();
         auto frame_received = video->frame_received_at();
         if (frame_received == std::chrono::steady_clock::time_point{} || frame_received > read_completed ||

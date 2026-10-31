@@ -38,6 +38,7 @@ if [[ "${2:-}" == --check ]]; then
   printf 'CHECK_OK mode=%s project=%s\n' "$mode" "$project"
   if [[ "$mode" == autoaim ]]; then
     printf 'Autoaim: build_real/auto-aim\n'
+    printf 'Config: %s/launch.cfg; input=shared (hero-camera.service)\n' "$project"
     print_startup_settings
     printf 'Target model: %s radius_m=%s\n' "$AUTOAIM_TARGET_MODEL" "$AUTOAIM_TARGET_RADIUS_M"
   fi
@@ -57,7 +58,8 @@ if [[ "$mode" == preview ]]; then
   /usr/bin/python3 "$launcher_dir/camera_preview.py"
 else
   export AUTOAIM_CONFIG="$project/launch.cfg"
-  printf 'Hero 自瞄链路：相机 → 检测 → 跟踪预测 → 云台串口。\n'
+  printf 'Hero 自瞄链路：共享相机原图 → 检测 → 跟踪预测 → 云台串口。\n'
+  printf '请先启动图传/hero-camera.service；当前自瞄不会独占打开相机。\n'
   printf '目标模型：%s，半径 %s m。\n' "$AUTOAIM_TARGET_MODEL" "$AUTOAIM_TARGET_RADIUS_M"
   if [[ "$AUTOAIM_TARGET_MODEL" == province_fixed ]]; then
     printf '省赛固定旋转靶：四板等半径、同高，中心速度约束为 0。\n'

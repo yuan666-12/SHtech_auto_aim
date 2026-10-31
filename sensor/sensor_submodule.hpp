@@ -75,6 +75,7 @@ namespace sensor {
         SensorConfig config_;
         // 传感器相关成员变量
         std::unique_ptr<WrapperHead> video;  /*!< 视频输入接口指针 */
+        bool shared_source_ = false;
         bool is_image_input_flipped = false; /*!< 标记输入图像是否需要翻转 */
 
         // 状态跟踪
